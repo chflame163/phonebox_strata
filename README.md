@@ -1,21 +1,22 @@
+
+
+# 把一台Strata 服务器的状态搬进旧手机屏幕
+
 本项目是基于 [ersinkoc/phonebox](https://github.com/ersinkoc/phonebox) 的修改版，使用旧手机监控 Linux 服务器上的 Strata 活动。
-
-# PhoneBox_Strata — 把一台 GPU 服务器的状态搬进旧手机屏幕
-
-> 三个子系统：**PhoneBox 面板**（Strata 推理服务器的 .NET agent + 一加 3T 面板 App）·
-> **小米智能插座功耗上屏**（1 Hz 只读墙电/今日 kWh 波形）·
-> **NAS 联动延时断电**（服务器关机后，群晖替它扛着数满 180 秒，再断掉给它供电的插座）。
->
-> 本仓库是 2026-11-18 从运行中的现场（服务器 + 手机 + NAS + 插座）重新整理的**全新本地 git
-> 仓库**，目标：照 README 从零走一遍，即可在当前服务器 100% 还原这套东西。所有地址/用户名/
-> 密码/坐标/token 均已脱敏。
 
 ![面板机 home 页实拍照（2026-11-18）](images/cover.jpg)
 
-> 封面即 home 12 卡全貌：墙电阶梯波（301 W · 今日 0.98 kWh）· Model state 六灯+Reading 进度 ·
-> GPU POWER/VRAM/CONTEXT 三 gauge · DECODE/PREFILL 大数字卡 · Top CPU 进程 · CPU/GPU/RAM/NETWORK 四 stat 卡。
 
-## 1. 现在跑着什么（终态快照，验收基准）
+
+
+> 三个子系统：    
+> **PhoneBox 面板**（Strata 推理服务器的 .NET agent + 一加 3T 面板 App）    
+> **小米智能插座功耗上屏**（1 Hz 只读墙电/今日 kWh 波形）    
+> **NAS 联动延时断电**（服务器关机时给群晖NAS发送消息，延迟180 秒后断掉服务器供电插座）。
+>
+> 本仓库是 2026-11-18 从运行现场（服务器 + 手机 + NAS + 插座）重新整理的，目标：照 README 从零走一遍，即可 100% 还原。  
+
+## 1. 跑着什么（终态快照，验收基准）
 
 | 侧     | 组件                                                                                                                   | 状态判据                                                       |
 | ------ | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
@@ -56,13 +57,13 @@ plug-read 1Hz ───┼─ pb-strata-pushd 1s ─POST 8765──► PhoneBox 
 上游 `d15399d`（v0.9.4），全部本地改动清单与动机见 `app/`/`agent/` README 及
 `docs/UPSTREAM-CHANGELOG.md` Unreleased 节。
 
-插座联动与全部运维脚本为自研；第三方素材（LineageOS、token 提取工具、python-miio、
+小米智能插座联动与全部运维脚本为独立开发；第三方素材（LineageOS、token 提取工具、python-miio、
 MIoT spec、GPT 参考文档）的链接与指纹在 **`docs/CODE-SOURCES.md`**。Strata 推理引擎是外部
 依赖（只消费其 `/metrics` 等 HTTP 契约），不在本仓库范围。
 
 ## 5. 脱敏与凭据（动手前先读）
 
-仓库里**没有一处真值**：服务器/NAS/插座/手机地址 → `<server-ip> <nas-ip> <plug-ip> <phone-ip>`，
+服务器/NAS/插座/手机地址 → `<server-ip> <nas-ip> <plug-ip> <phone-ip>`，
 用户名 → `<user> <nas-user>`，数据盘 → `<data-disk>`，adb 序列号 → `<serial>`，主机名/SSID/
 坐标/插座 token → `<host> <ssid> <lat> <lon> <plug-token>`，面板 lan token 与引擎 API key →
 运行时自生成/自适应。完整对照、真值存放位置（服务器
@@ -72,7 +73,7 @@ MIoT spec、GPT 参考文档）的链接与指纹在 **`docs/CODE-SOURCES.md`**�
 
 ## 6. 前置条件与版本钉
 
-硬件：一台 Linux 服务器（本案例 Ubuntu 24.04 + RTX 3090 + Strata 引擎 :8080）、一台 USB 可长期
+硬件：一台 Linux 服务器（本案例 Ubuntu 24.04 + RTX 3090 + Strata 引擎）、一台 USB 可长期
 挂载的 Android 手机（本案例 3T/Lineage18.1）、一只 xiaomi.plug.04 智能插座、一台常开 NAS
 （本案例群晖 DSM 7）。软件版本钉与**大型工具下载链接**（dotnet 10 / JDK17 / Android SDK35+BT34 /
 gradle 8.11.1 / platform-tools / python-miio 0.5.12 / LineageOS 镜像及 md5 / token_extractor.exe
@@ -115,7 +116,7 @@ gradle 8.11.1 / platform-tools / python-miio 0.5.12 / LineageOS 镜像及 md5 / 
 **先保持 dry-run**）。验收：短阈值三路测试（失联 FIRE / 握手 FIRE / rearm）→ 改回 180 →
 `PLUG_OFF_CMD` 换真命令 → 一次真 `poweroff` 复现“握手+181 s 断电+来电自启回来”。
 
-**Step 10 控件与布局上屏**：按 `panel/README.md` §3——回植快照或 8765 手搭（两个 HTML 全文
+**Step 10 控件与布局上屏**：按 `panel/README.md` §3——回植快照（两个 HTML 全文
 粘贴；三个 gauge 的 max=24/512/350）。验收 = 第 1 节状态表的手机侧各行 + 截屏比对
 （home 12 卡、数字 1 s 一跳、墙电阶梯波在爬）。
 
@@ -142,8 +143,6 @@ build/test 都必须指到工程目录**，裸 `dotnet build` 会 MSB1003）；`
 
 ## 10. 边界与已知事项
 
-Strata 引擎没跑时 strata_* 断供、其余照常；1 Hz UDP 的 24 h 长跑稳定性在观察（现有 ~796 样本
-零失败）；NAS 上 nas_off 三件套仍是现场硬编码旧版（等价未迁移，见 `plug-control/README.md` 末节）；
+Strata 引擎没跑时 strata_* 断供、其余照常；1 Hz UDP 的 24 h 长跑稳定性在观察；NAS 上 nas_off 三件套仍是现场硬编码旧版（等价未迁移，见 `plug-control/README.md` 末节）；
 agent 原地重启（非 reboot）后手机若已深睡需等一个 doze 维护窗/分钟级自愈；
 
-手机电量百分比在 gauge 重学习前不可信（只认 charge=/volt=）。
