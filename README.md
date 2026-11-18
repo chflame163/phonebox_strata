@@ -1,3 +1,5 @@
+本项目是基于 [ersinkoc/phonebox](https://github.com/ersinkoc/phonebox) 的修改版，使用旧手机监控 Linux 服务器上的 Strata 活动。
+
 # PhoneBox_Strata — 把一台 GPU 服务器的状态搬进旧手机屏幕
 
 > 三个子系统：**PhoneBox 面板**（Strata 推理服务器的 .NET agent + 一加 3T 面板 App）·
