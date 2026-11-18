@@ -8,6 +8,11 @@
 > 仓库**，目标：照 README 从零走一遍，即可在当前服务器 100% 还原这套东西。所有地址/用户名/
 > 密码/坐标/token 均已脱敏。
 
+![面板机 home 页实拍照（2026-11-18）](images/cover.jpg)
+
+> 封面即 home 12 卡全貌：墙电阶梯波（301 W · 今日 0.98 kWh）· Model state 六灯+Reading 进度 ·
+> GPU POWER/VRAM/CONTEXT 三 gauge · DECODE/PREFILL 大数字卡 · Top CPU 进程 · CPU/GPU/RAM/NETWORK 四 stat 卡。
+
 ## 1. 现在跑着什么（终态快照，验收基准）
 
 | 侧     | 组件                                                                                                                   | 状态判据                                                       |
