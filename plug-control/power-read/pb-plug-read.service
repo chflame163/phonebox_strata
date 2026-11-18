@@ -1,0 +1,15 @@
+[Unit]
+Description=PhoneBox plug power reader - 1 Hz LAN miio on the supply plug (READ-ONLY, never sets)
+Documentation=file:///home/<user>/bin/pb_plug_read.py
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/pb_plug.env
+ExecStart=%h/.venvs/miio/bin/python -I -u %h/bin/pb_plug_read.py
+Restart=always
+RestartSec=3
+Nice=10
+
+[Install]
+WantedBy=default.target

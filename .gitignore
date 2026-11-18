@@ -1,0 +1,28 @@
+# 构建产物（安卓 / .NET / 前端）
+.gradle/
+build/
+bin/
+obj/
+local.properties
+*.iml
+.idea/
+.vscode/
+node_modules/
+test-results/
+playwright-report/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# 凭据与现场值文件一律不入库（仓库内只保留 *.example / 占位符版）
+*.env
+
+# 杂散
+.DS_Store
+Thumbs.db
+*.log
+nohup.out
+dist/
+
+# 注意：artifacts/ 里的发布 APK 是有意入库的，上面没有 *.apk 规则。

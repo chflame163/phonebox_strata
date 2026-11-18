@@ -1,0 +1,2 @@
+# OnePlus (2a70) adb；装好后 sudo udevadm control --reload && sudo udevadm trigger
+SUBSYSTEM=="usb", ATTR{idVendor}=="2a70", MODE="0666"

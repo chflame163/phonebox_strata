@@ -1,0 +1,236 @@
+<!-- 整机墙电 / Wall power — PhoneBox Custom HTML widget (4x2, 真机 ≈232×123 CSS px)。
+     数据：push key `plug_power`（payload 见 pb_strata_push.py 的 plug_power 段与 pb_plug_read.py）。
+       左 = 插座实时瓦（给这台服务器供电的那只 xiaomi.plug.04，siid11/piid2，设备端每秒刷新）；
+       右 = 今日耗电（服务器侧自算 ∑W·dt，本地午夜重置、进程重启续算；插座自带的 piid1 在
+              way=false 时只是功率镜像，当不了电表，见 pb_plug_read.py docstring）。
+     下方 SVG 用 step-after 阶梯画法：插座读数本就是离散的秒级采样，斜线插值等于撒谎。
+     颜色由 payload.level 决定，两条阈值虚线读 payload.warn_w/err_w，量程上限读 payload.full
+     ——三个数都在推送脚本里，控件不抄第二份，改口径只改服务器一处。
+
+     尺寸账（用户 2026-11-17 一路改过 4×4 → 6×4 → 3×2，最终定 4×2）：12 列每列 ≈58 px、6 行每行 ≈61.5 px
+     （横屏视口 731×411、dpr 2.625，按已实测的 6×2 = 348×123 反推）⇒ 4×2 ≈ 232×123。
+     比 3×2 多 58 px 宽、高度一毫米没多，所以能找回 peak（并进底行角注）和更大一号字号；文字标签仍然不放：
+     一行高的顶栏装不下“标签+数字”两层，单位后缀（W / kWh）本身就是语义。阈值数字也不写在线边——
+     "250 W" 一行字要吃掉近半张卡的宽度。要 NOW/TODAY 那种带标签的排面就回 6×4 版（在 git 与本地镜像里）。
+     Y 轴默认自适应（AUTO_SCALE），只在变化>15% 时跳 25W 一档；下限挂 warn×0.8=200W：
+     纯跟随最大值会让 88W 空载撑满整卡看着像满载，固定 700W 又把空载压成贴地直线，两种都试过都不行。
+     卡片外框（背景/边框/圆角）由 PhoneBox 的 .w-html.card 提供，这里只画内容，别再套一层卡。 -->
+<style>
+:root{
+  /* Strata dark-theme tokens，与 Model state 那块同源（tokens.css [data-theme=dark]） */
+  --pl-ok:#34d399;  --pl-warn:#f5b53d;  --pl-err:#ff5a6e;  --pl-off:#5b646b;
+  --pl-ink:#eef1f3; --pl-muted:#8e979f;
+  --pl-grid:rgba(255,255,255,.13); --pl-base:rgba(255,255,255,.22);
+}
+.pw{position:absolute;inset:0;display:flex;flex-direction:column;gap:.3em;
+    padding:.5em .62em .42em;box-sizing:border-box;overflow:hidden;
+    color:var(--pl-ink);font-size:13px;font-variant-numeric:tabular-nums;
+    font-synthesis:none;-webkit-font-smoothing:antialiased}
+.pw>*,.pw{min-width:0}
+
+.pw__head{display:flex;align-items:baseline;justify-content:space-between;gap:.5em;flex:none;flex-wrap:nowrap}
+.pw__big{display:flex;align-items:baseline;gap:.08em;line-height:.9;font-weight:800;font-size:2.1em;
+  color:var(--pl-off);transition:color 160ms ease;white-space:nowrap}
+.pw__big i{font-style:normal;font-size:.4em;font-weight:700;letter-spacing:.03em;color:var(--pl-muted)}
+.pw[data-lvl="ok"]    .pw__big{color:var(--pl-ok)}
+.pw[data-lvl="warn"]  .pw__big{color:var(--pl-warn)}
+.pw[data-lvl="error"] .pw__big{color:var(--pl-err)}
+.pw__today{flex:none;text-align:right}
+.pw__num{line-height:1;font-weight:800;font-size:1.16em;color:var(--pl-ink);white-space:nowrap}
+.pw__num i{font-style:normal;font-size:.55em;font-weight:700;color:var(--pl-muted);margin-left:.22em}
+
+.pw__chart{position:relative;flex:1 1 auto;min-height:1.5em}
+.pw__chart svg{position:absolute;inset:0;width:100%;height:100%;display:block;overflow:visible}
+.pw__area{fill:var(--pl-off);fill-opacity:.15;stroke:none;transition:fill 160ms ease}
+.pw__line{fill:none;stroke:var(--pl-off);stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round;transition:stroke 160ms ease}
+.pw[data-lvl="ok"]    .pw__line{stroke:var(--pl-ok)}    .pw[data-lvl="ok"]    .pw__area{fill:var(--pl-ok)}
+.pw[data-lvl="warn"]  .pw__line{stroke:var(--pl-warn)}  .pw[data-lvl="warn"]  .pw__area{fill:var(--pl-warn)}
+.pw[data-lvl="error"] .pw__line{stroke:var(--pl-err)}   .pw[data-lvl="error"] .pw__area{fill:var(--pl-err)}
+.pw__thr{stroke:var(--pl-grid);stroke-width:1;stroke-dasharray:2 4}
+.pw__zero{stroke:var(--pl-base);stroke-width:1}
+
+.pw__meta{flex:none;font-size:.56em;line-height:1.3;color:var(--pl-muted);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;letter-spacing:.02em}
+.pw--dead .pw__meta{color:var(--pl-err)}
+@media (prefers-reduced-motion:reduce){.pw__big,.pw__line,.pw__area{transition:none}}
+</style>
+
+<div class="pw" id="pw" data-lvl="none">
+  <div class="pw__head">
+    <div class="pw__cur">
+      <span class="pw__big"><span id="pw-w">–</span><i>W</i></span>
+    </div>
+    <div class="pw__today">
+      <span class="pw__num"><span id="pw-kwh">–</span><i id="pw-ku">kWh</i></span>
+    </div>
+  </div>
+  <div class="pw__chart">
+    <svg id="pw-svg" preserveAspectRatio="none" aria-hidden="true">
+      <path class="pw__area" id="pw-area" d=""></path>
+      <line class="pw__zero" id="pw-zero" x1="0" x2="0" y1="0" y2="0"></line>
+      <line class="pw__thr" id="pw-t1" x1="0" x2="0" y1="0" y2="0" style="display:none"></line>
+      <line class="pw__thr" id="pw-t2" x1="0" x2="0" y1="0" y2="0" style="display:none"></line>
+      <path class="pw__line" id="pw-line" d=""></path>
+    </svg>
+  </div>
+  <div class="pw__meta" id="pw-meta">waiting for the plug…</div>
+</div>
+
+<script>
+(function () {
+  var KEY = "plug_power";
+  var WINDOW_S = 180;            // 波形窗口宽度（秒）。4×2 下每点约 1.29 px，再拉长窗口就只剩“趋势”没有“跳变”
+  var STALE_MS = 9000;           // 超过这个时间没新数据就当插座失联（脚本 ttl 8 s，随后这条 key 会从 push 里掉下去）
+  var AUTO_SCALE = true;         // 见文件头注释
+
+  var root = document.getElementById("pw"),
+      wEl = document.getElementById("pw-w"),
+      kwhEl = document.getElementById("pw-kwh"),
+      kuEl = document.getElementById("pw-ku"),
+      chart = root.querySelector(".pw__chart"),
+      areaEl = document.getElementById("pw-area"),
+      lineEl = document.getElementById("pw-line"),
+      zeroEl = document.getElementById("pw-zero"),
+      t1El = document.getElementById("pw-t1"), t2El = document.getElementById("pw-t2"),
+      metaEl = document.getElementById("pw-meta");
+
+  var hist = [], last = null, lastAt = 0, full = 700, scale = 0, thr1 = null, thr2 = null, dead = false;
+
+  function num(v, d) {                       // 与 Strata app.js 同口径：空值 en dash，数字千分位
+    if (v === null || v === undefined || v === "" || !isFinite(+v)) return "–";
+    return Number(v).toLocaleString("en-US", { maximumFractionDigits: d || 0, minimumFractionDigits: d || 0 });
+  }
+
+  function render(item) {
+    var d = item && typeof item === "object" && "data" in item ? item.data : item;
+    if (!d || typeof d !== "object") { note_dead(); return; }        // ttl 过期 / 冷启动地板帧（只剩 value:0）
+    var v = +d.value;
+    if (!isFinite(v)) { note_dead(); return; }
+    var at = +d.__at || Date.now();                                 // 真机按到达时刻；离线验证可注入 __at
+    last = d; lastAt = at; dead = false;
+    full = Math.max(+d.full || 700, 1);
+    thr1 = isFinite(+d.warn_w) ? +d.warn_w : null;
+    thr2 = isFinite(+d.err_w) ? +d.err_w : null;
+    if (!hist.length || Math.abs(at - hist[hist.length - 1].t) > 250) hist.push({ t: at, v: v });
+    else hist[hist.length - 1].v = v;
+    while (hist.length > 2 && hist[0].t < at - (WINDOW_S + 30) * 1000) hist.shift();
+    rescale();
+    paint();
+  }
+
+  // 量程：只跟窗口里的最大值，下限挂橙阈值（warn×0.8=200W）。
+  // 两个极端都实测过：把红阈值线硬留在画面里 ⇒ 空载量程被顶到 450W、86W 又变回贴地直线；
+  // 完全跟随最大值 ⇒ 88W 撑满整卡、看着像满载。加下限之后，高度大致对应绝对量级，
+  // 而 ±8W 的秒级跳变在 200W 量程里仍有 2~3 px 可见。阈值线跑出量程就不画：此刻离红档还远，
+  // 数字的颜色已经把档位说了，负载爬上来线自然回到画面。
+  // 跳档门槛 15%、档位 25W：每秒重标定会让曲线“呼吸”，反而读不出跳变。
+  function rescale() {
+    var hi = 0;
+    for (var i = 0; i < hist.length; i++) if (hist[i].v > hi) hi = hist[i].v;
+    var floor = Math.max(50, (thr1 && thr1 < full ? thr1 * 0.8 : 200));
+    var target = AUTO_SCALE ? Math.max(floor, hi * 1.15) : full;
+    if (!AUTO_SCALE || hi > full) target = Math.max(hi * 1.04, full);
+    target = Math.ceil(target / 25) * 25;
+    if (!scale || Math.abs(target - scale) / scale > 0.15) scale = target;
+  }
+
+  function note_dead() {
+    if (dead) return;
+    dead = true;
+    wEl.textContent = "–"; kwhEl.textContent = "–"; kuEl.textContent = "kWh";
+    root.dataset.lvl = "none"; root.classList.add("pw--dead");
+    metaEl.textContent = "no live watts";                    // 232 px 也只够一行短语，原因写给 TESTLOG 看
+    fit(); draw();
+  }
+
+  function paint() {
+    var d = last || {};
+    root.classList.remove("pw--dead");
+    root.dataset.lvl = d.level || "none";
+    wEl.textContent = num(d.value, 0);
+
+    // 单位恒为 kWh（用户 2026-11-18 点名：别一会儿 Wh 一会儿 kWh）。代价是开机头一小段会显示
+    // 0.00 kWh——当日能量从 reader 进程启动起算（进程上午重启过一次时只有几 Wh），这比数字跳单位好读。
+    kwhEl.textContent = num(+d.today_kwh, 2); kuEl.textContent = "kWh";
+
+    var bits = [];
+    if (d.on === false) bits.push("outlet OFF");
+    if (isFinite(+d.avg_w)) bits.push("avg " + num(+d.avg_w, 0));
+    if (isFinite(+d.peak_w)) bits.push("peak " + num(+d.peak_w, 0));
+    bits.push("max " + num(scale, 0) + "W");
+    metaEl.textContent = bits.join(" · ");
+    fit();
+    draw();
+  }
+
+  function draw() {
+    var now = Date.now();
+    if (!dead && lastAt && now - lastAt > STALE_MS) { note_dead(); return; }
+    var W = chart.clientWidth, H = chart.clientHeight;
+    if (W < 12 || H < 12) return;
+    if (!scale) rescale();
+    var svg = document.getElementById("pw-svg");
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    var PAD_T = 4, base = H - 1, top = PAD_T;
+    function yOf(v) { v = Math.max(0, Math.min(v, scale)); return base - (v / scale) * (base - top); }
+    function xOf(t) { return Math.max(0, Math.min(W, W * (1 - (now - t) / (WINDOW_S * 1000)))); }
+
+    zeroEl.setAttribute("x1", 0); zeroEl.setAttribute("x2", W);
+    zeroEl.setAttribute("y1", base + .5); zeroEl.setAttribute("y2", base + .5);
+    [[thr1, t1El], [thr2, t2El]].forEach(function (p) {
+      var t = p[0], ln = p[1];
+      if (t === null || t >= scale * 0.985) { ln.style.display = "none"; return; }
+      var y = yOf(t).toFixed(1);
+      ln.style.display = ""; ln.setAttribute("x1", 0); ln.setAttribute("x2", W);
+      ln.setAttribute("y1", y); ln.setAttribute("y2", y);
+    });
+
+    var pts = [];
+    for (var i = 0; i < hist.length; i++) if (now - hist[i].t <= WINDOW_S * 1000) pts.push(hist[i]);
+    if (dead || !pts.length) { lineEl.setAttribute("d", ""); areaEl.setAttribute("d", ""); return; }
+
+    var dl = "M" + xOf(pts[0].t).toFixed(1) + "," + yOf(pts[0].v).toFixed(1);
+    for (var j = 1; j < pts.length; j++) {                            // step-after：水平走到那一秒的横位置，再垂直跳
+      var x = xOf(pts[j].t), py = yOf(pts[j - 1].v), cy = yOf(pts[j].v);
+      if (Math.abs(cy - py) < 0.01) { dl += " L" + x.toFixed(1) + "," + py.toFixed(1); continue; }
+      dl += " L" + x.toFixed(1) + "," + py.toFixed(1) + " L" + x.toFixed(1) + "," + cy.toFixed(1);
+    }
+    var xEnd = xOf(lastAt), yEnd = yOf(pts[pts.length - 1].v);
+    dl += " L" + xEnd.toFixed(1) + "," + yEnd.toFixed(1);
+    lineEl.setAttribute("d", dl);
+    areaEl.setAttribute("d", dl + " L" + xEnd.toFixed(1) + "," + base + " L" +
+      xOf(pts[0].t).toFixed(1) + "," + base + " Z");
+  }
+
+  // 4×2 在横屏 3T 上约 232×123 CSS px（1080×1920 @420dpi，dpr 2.625）：先保字号，再保波形高度
+  var hi = 16, lo = 7, cacheKey = "";
+  function fits(f) {
+    root.style.fontSize = f + "px";
+    return root.scrollHeight <= root.clientHeight + 1 && chart.clientHeight >= Math.min(30, root.clientHeight * 0.3);
+  }
+  function fit() {
+    var key = root.clientWidth + "x" + root.clientHeight + "x" + wEl.textContent.length + "x" + metaEl.textContent.length;
+    if (key === cacheKey && root.scrollHeight <= root.clientHeight + 1) return;
+    cacheKey = key;
+    var f;
+    for (f = hi; f > lo; f -= 0.5) { if (fits(f)) { root.dataset.fs = f; return; } }
+    fits(lo); root.dataset.fs = lo;
+  }
+
+  var timer = 0;                                                       // 曲线右移靠定时慢慢推，不必每秒重画整图
+  function loop() { draw(); if (!dead) { if (timer) clearTimeout(timer); timer = setTimeout(loop, 250); } }
+
+  root.__pwRender = render;                                            // 离线验证钩子：宿主可直接喂一条 push 数据
+
+  if (window.phonebox && window.phonebox.on) {
+    window.phonebox.on("push", function (items) { render(items && items[KEY]); });
+  } else {
+    window.addEventListener("message", function (e) {
+      var m = e.data;
+      if (m && m.phonebox === "data" && m.kind === "push") render(m.value && m.value[KEY]);
+    });
+  }
+  window.addEventListener("resize", function () { cacheKey = ""; fit(); draw(); });
+  fit(); draw(); loop();
+})();
+</script>

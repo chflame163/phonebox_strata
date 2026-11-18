@@ -1,0 +1,12 @@
+[Unit]
+Description=PhoneBox agent (desk panel for an Android phone)
+After=graphical-session.target
+
+[Service]
+ExecStart=/home/<user>/.local/share/PhoneBox/app/PhoneBoxAgent
+Restart=on-failure
+RestartSec=5
+Environment=DOTNET_ROOT=/usr/lib/dotnet
+
+[Install]
+WantedBy=default.target

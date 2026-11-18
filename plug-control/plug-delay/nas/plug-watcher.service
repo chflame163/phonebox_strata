@@ -1,0 +1,14 @@
+[Unit]
+Description=PlugDelay NAS plug watcher
+After=network.target
+
+[Service]
+Type=simple
+# 按你的实际路径改 /volume1/homes/USER/... (DSM 7 自带 systemd,可直接 enable;
+# 若 enable 不便,改用 start_plug_watcher.sh 走任务计划开机触发)
+ExecStart=/usr/bin/python3 -I /volume2/homes/<nas-user>/plug-delay/nas/plug_watcher.py --env /volume2/homes/<nas-user>/plug-delay/nas/plug-watcher.env
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

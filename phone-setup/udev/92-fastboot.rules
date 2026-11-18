@@ -1,0 +1,3 @@
+# fastboot：OnePlus 走 05c6(QPST) 与 2a70
+SUBSYSTEM=="usb", ATTR{idVendor}=="05c6", MODE="0666"
+SUBSYSTEM=="usb", ATTR{idVendor}=="2a70", MODE="0666"

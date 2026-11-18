@@ -1,0 +1,185 @@
+# 脱敏版：真值在同目录 device_list.txt（已被 .gitignore 排除，只留在本机）。
+# 遮掉的类别：32-hex token（插座那只换成 <plug-token>）· local_key 类字段 · MAC · 全部 IPv4 ·
+#             云端 home id · 云端设备 ID/DID · 设备中文名（房间布局本身也是信息）。
+# 留下的形状：设备条数、型号串与 name→model 的对应位置，够回答『哪只是插座、家里多少设备』，
+#             但答不出『这是谁家的哪台』。
+Devices found for server "cn" @ home "<cloud-home-id>":
+   ---------
+   NAME:     <device-name-01>
+   ID:       <device-id>
+   MAC:      <mac-01>
+   IP:       <lan-ip-01>
+   TOKEN:    <token-01>
+   MODEL:    yeelink.light.ceil40
+   ---------
+   NAME:     <device-name-02>
+   ID:       <device-id>
+   MAC:      <mac-02>
+   IP:       <lan-ip-02>
+   TOKEN:    <token-02>
+   MODEL:    yeelink.light.ceil40
+   ---------
+   NAME:     <device-name-03>
+   ID:       <device-id>
+   MAC:      <mac-03>
+   IP:       <lan-ip-03>
+   TOKEN:    <plug-token>
+   MODEL:    xiaomi.plug.04
+   ---------
+   NAME:     <device-name-04>
+   ID:       <device-id>
+   MAC:      <mac-04>
+   IP:       <lan-ip-04>
+   TOKEN:    <token-04>
+   MODEL:    chunmi.cooker.normal2
+   ---------
+   NAME:     <device-name-05>
+   ID:       <device-id>
+   MAC:      <mac-05>
+   IP:       <lan-ip-05>
+   TOKEN:    <token-05>
+   MODEL:    xiaomi.juicer.cms1
+   ---------
+   NAME:     <device-name-06>
+   ID:       <device-id>
+   MAC:      <mac-06>
+   TOKEN:    <token-06>
+   MODEL:    miwear.watch.n67cn
+   ---------
+   NAME:     <device-name-07>
+   ID:       <device-id>
+   MAC:      <mac-07>
+   IP:       <lan-ip-06>
+   TOKEN:    <token-07>
+   MODEL:    lemesh.light.wy0c15
+   ---------
+   NAME:     <device-name-08>
+   ID:       <device-id>
+   MAC:      <mac-08>
+   IP:       <lan-ip-07>
+   TOKEN:    <token-08>
+   MODEL:    zhimi.airpurifier.m1
+   ---------
+   NAME:     <device-name-09>
+   ID:       <device-id>
+   MAC:      <mac-09>
+   IP:       <lan-ip-08>
+   TOKEN:    <token-09>
+   MODEL:    xiaomi.airc.h09h00
+   ---------
+   NAME:     <device-name-10>
+   ID:       <device-id>
+   MAC:      <mac-10>
+   IP:       <lan-ip-09>
+   TOKEN:    <token-10>
+   MODEL:    cuco.plug.v3
+   ---------
+   NAME:     <device-name-11>
+   ID:       <device-id>
+   MAC:      <mac-11>
+   IP:       <lan-ip-10>
+   TOKEN:    <token-11>
+   MODEL:    yeelink.light.ceil40
+   ---------
+   NAME:     <device-name-12>
+   ID:       <device-id>
+   MAC:      <mac-12>
+   IP:       <lan-ip-11>
+   TOKEN:    <token-12>
+   MODEL:    xiaomi.humidifier.p1500
+   ---------
+   NAME:     <device-name-13>
+   ID:       <device-id>
+   MAC:      <mac-13>
+   IP:       <lan-ip-12>
+   TOKEN:    <token-13>
+   MODEL:    yunmi.waterpuri.lx4
+   ---------
+   NAME:     <device-name-14>
+   ID:       <device-id>
+   MAC:      <mac-14>
+   IP:       <lan-ip-13>
+   TOKEN:    <token-14>
+   MODEL:    dmaker.fan.p221
+   ---------
+   NAME:     <device-name-15>
+   ID:       <device-id>
+   MAC:      <mac-15>
+   IP:       <lan-ip-14>
+   TOKEN:    <token-15>
+   MODEL:    xiaomi.airc.h09h00
+   ---------
+   NAME:     <device-name-16>
+   ID:       <device-id>
+   MAC:      <mac-16>
+   IP:       <lan-ip-15>
+   TOKEN:    <token-16>
+   MODEL:    chuangmi.camera.039c01
+   ---------
+   NAME:     <device-name-17>
+   ID:       <device-id>
+   MAC:      <mac-17>
+   IP:       <lan-ip-16>
+   TOKEN:    <token-17>
+   MODEL:    lemesh.light.wy0d02
+   ---------
+   NAME:     <device-name-18>
+   ID:       <device-id>
+   MAC:      <mac-18>
+   IP:       <lan-ip-17>
+   TOKEN:    <token-18>
+   MODEL:    xiaomi.airer.tjh
+   ---------
+   NAME:     <device-name-19>
+   ID:       <device-id>
+   MAC:      <mac-19>
+   IP:       <lan-ip-18>
+   TOKEN:    <token-19>
+   MODEL:    zhimi.fan.sa1
+   ---------
+   NAME:     <device-name-20>
+   ID:       <device-id>
+   MAC:      <mac-20>
+   IP:       <lan-ip-19>
+   TOKEN:    <token-20>
+   MODEL:    yeelink.light.ceil40
+   ---------
+   NAME:     <device-name-21>
+   ID:       <device-id>
+   MAC:      <mac-21>
+   IP:       <lan-ip-20>
+   TOKEN:    <token-21>
+   MODEL:    deerma.mfcp.v1
+   ---------
+
+No devices found for server "cn" @ home "<cloud-home-id>".
+Devices found for server "cn" @ home "<cloud-home-id>":
+   ---------
+   NAME:     <device-name-22>
+   ID:       <device-id>
+   MAC:      <mac-22>
+   IP:       <lan-ip-21>
+   TOKEN:    <token-22>
+   MODEL:    chuangmi.camera.029a02
+   ---------
+   NAME:     <device-name-23>
+   ID:       <device-id>
+   MAC:      <mac-23>
+   IP:       <lan-ip-22>
+   TOKEN:    <token-23>
+   MODEL:    chuangmi.camera.029a02
+   ---------
+   NAME:     <device-name-24>
+   ID:       <device-id>
+   MAC:      <mac-24>
+   IP:       <lan-ip-23>
+   TOKEN:    <token-24>
+   MODEL:    chuangmi.camera.029a02
+   ---------
+   NAME:     <device-name-25>
+   ID:       <device-id>
+   MAC:      <mac-25>
+   IP:       <lan-ip-24>
+   TOKEN:    <token-25>
+   MODEL:    chuangmi.camera.029a02
+   ---------
