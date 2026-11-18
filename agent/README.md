@@ -3,13 +3,13 @@
 跑在 Strata 服务器上的用户级服务：采集整机指标（CPU/内存/网络/磁盘/温度 + GPU 常驻
 `nvidia-smi -lms 1000` 流），经 adb/局域网把面板拉起来并喂 1 Hz 状态流，维护 push 值存储，
 提供 8765 设置页（布局编辑器）与 8766 LAN HTTPS。开机“重新枚举→亮屏进面板”的唤醒主力
-`AdbReverse` 是上游内置机制，fork 未改。
+`AdbReverse` 是上游内置机制，本项目未改。
 
-## 相对上游 0.9.4 的全部改动（fork 清单）
+## 相对上游 0.9.4 的全部本地改动清单
 
 | 文件 | 改动 |
 |---|---|
-| `PhoneBox.Agent/PushStore.cs` | `Floored()`：载入 data.json 时每条恢复值折最低态（对象→`{"value":0}` 保 unit、数组→`[]`、标量→0，**At 必须重打**否则页面不重绘；ExpiresAt 置空直到真推覆盖）；`SealAndFloorAll()`：优雅停机时密封存储、全键折 0、立即落盘；落盘防抖用上游 `_savePending`（fork 自研版已被上游修复取代，合并时取上游） |
+| `PhoneBox.Agent/PushStore.cs` | `Floored()`：载入 data.json 时每条恢复值折最低态（对象→`{"value":0}` 保 unit、数组→`[]`、标量→0，**At 必须重打**否则页面不重绘；ExpiresAt 置空直到真推覆盖）；`SealAndFloorAll()`：优雅停机时密封存储、全键折 0、立即落盘；落盘防抖用上游 `_savePending`（本项目早期自研版已被上游修复取代，采用上游实现） |
 | `PhoneBox.Agent/Program.cs` | `/api/state` 帧带 `pushItems = push.Snapshot()`（push 值进 1 Hz 状态帧，免二次 GET）；`ApplicationStopping` 接线地板告别 + ~1.3 s 宽限让最后一帧经 SSE 送达 |
 | `PhoneBox.Agent/Config.cs` + 3× `config.default*.json` + `settings.html` | `display.powerStandby` 字段与开关；`powerStandbyDelaySec` 出厂默认 30→**5 s** |
 | `../tools/check-release.py` | 放宽一行：容忍 versionName 的 `+fork` 后缀（上游断言 gradle 与 csproj 逐字相等） |
@@ -20,7 +20,7 @@
 
 ```bash
 cd agent && dotnet build -c Release            # TFM net10.0（csproj 里的 windows TFM 仅 Windows 发行用）
-dotnet test -c Release                         # 331 个测试全绿是本 fork 的合并验收线
+dotnet test -c Release                         # 331 个测试全绿是本仓库验收线
 # 产物在 agent/PhoneBox.Agent/bin/Release/net10.0/ 顶层：apphost PhoneBoxAgent、
 # PhoneBoxAgent.dll、config.default*.json、templates.json、widgets.json ——同级那 11 个文件即部署内容
 ```

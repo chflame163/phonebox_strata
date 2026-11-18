@@ -24,8 +24,7 @@ plug-delay/ ─ 服务器心跳/握手 → 群晖 NAS 判决 → 局域网 miio 
 
 ## 拿插座 IP 与 token
 
-见 `docs/token-extraction.md`（Xiaomi-cloud-tokens-extractor 用法 + 本次实测被堵的四条路与
-避坑清单）。真值存放：`<plug-ip>` + `<plug-token>`，两处各一份（见上红线 3）。
+见 `docs/token-extraction.md`（Xiaomi-cloud-tokens-extractor 用法与注意事项）。真值存放：`<plug-ip>` + `<plug-token>`，两处各一份（见上红线 3）。
 
 ## 部署 A —— power-read（服务器）
 

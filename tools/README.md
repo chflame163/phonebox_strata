@@ -27,7 +27,7 @@
   实测首次全量 ~28 s、增量 11-13 s（gradle daemon 常驻时）。
 - `check-release.py` —— 上游 CI 的版本一致性断言（gradle versionName ≡ csproj Version ≡ tag）。
   **注意它是上游目录布局的产物**（按 `android/`、`agent/` 找文件），在本仓库新布局下若要跑需把
-  路径参数改一下；fork 的放宽（容忍 `+fork` 后缀）已在其内。
+  路径参数改一下；本项目的放宽（versionName 容忍 `+fork` 后缀）已在其内。
 - `demo-server.py` —— 上游的假 agent（本地起一个 :8765 喂面板假数据），配合 ui-tests 或纯前端调试。
 - `smoke-agent.py` —— 冒烟：用隔离配置拉起一个刚构建的 agent，校验真实 API 面。新装/升级 agent 后可跑。
 - `ui-tests/` —— 上游 Playwright 面板回归（`npm i && npx playwright test`，会自起 demo-server）。

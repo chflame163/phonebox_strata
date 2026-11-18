@@ -1,9 +1,9 @@
-# 用 Xiaomi-cloud-tokens-extractor 获取设备 token（以及四条被堵的死路）
+# 用 Xiaomi-cloud-tokens-extractor 获取设备 token
 
 局域网 miio 的全部凭据 = **IP + 32 位 token**（token 派生 AES key/iv）。插座被重置或重新配网后
 token 会换，两处存放（NAS `plug-secret.env`、服务器 `pb_plug.env`）都要同步。
 
-## 工具与本次实测路径
+## 工具与用法
 
 - 工具：**Xiaomi-cloud-tokens-extractor**，本次用的 exe 来自
   <https://github.com/fh489320599/Xiaomi-cloud-tokens-extractor> 的 Windows release
@@ -18,20 +18,9 @@ token 会换，两处存放（NAS `plug-secret.env`、服务器 `pb_plug.env`）
 - 输出格式样例见同目录 `device_list.masked.txt`（token/MAC/IP/设备名全部打码后的真实导出）。
   若云登录被拦，用米家 App「我的 → 我的设备 → 导出设备备份（区服选中国大陆）」拿到导出件，
   再用本工具的本地备份解析模式提 token——本次最终 token 即走“导出结果里取”的路子。
-
-## 别重踩的四条死路（2026-11-17 全部实测被堵）
-
-1. **python-miio 的 micloud 云登录**：新版小米对 sid=xiaomiio 的应用身份核验——
-   `securityStatus=16` → authStart 网页验证流（短信/邮箱），脚本过不去。注意这与账号是否开
-   “双重认证”无关（本机该开关本就关着）。fh 系 exe/fork 的登录实现能过，原版 Python 若撞同款
-   核验也走 App 导出路。
-2. **`miiocli discover` 明文探测**：已配过网的设备不回 token（只能拿没配网的新设备）。
-3. **米家 App 设备备份导出**：新版 App 的设置里没有旧版那个导出入口（不同版本 UI 差异，
-   找到就可用，找不到别硬找）。
-4. **adb `run-as com.xiaomi.smarthome`**：release 包非 debuggable，直接报 not debuggable。
-
-另外：**手搓纯 Python AES 解密 miio 报文的路线别走**——本次写了两版各有 bug（ShiftRows 按列移
-之类），群晖/服务器直接装 `python-miio`（0.5.12）最稳。
+  云登录时若被小米新版“应用身份核验”拦住（`securityStatus=16` → 短信/邮箱网页流），
+  就走上面这条 App 导出路；`python-miio` 自带的 micloud 模块会撞同一堵墙，别用。
+  解密 miio 报文一律用现成的 `python-miio`（0.5.12），不要自己手写 AES。
 
 ## 插座 IP 怎么定
 

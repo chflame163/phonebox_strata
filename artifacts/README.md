@@ -21,5 +21,5 @@
 
 vc24 powerfix `9f8cc3be` → vc25 数据判据 `25ee74ab`/终 `429618cc` → vc26 事件快醒 `e861e79d` →
 vc27 深睡 `0c6dc633` → vc28 pushItems+delay5 `bda89ec7` → vc29 断流地板 `f0f68d01` →
-vc30 stat 卡地板 `4842f32e` → vc31 进程列表地板 `2a30a5aa` → 0.9.4+fork 合并构建 `de714ead` →
+vc30 stat 卡地板 `4842f32e` → vc31 进程列表地板 `2a30a5aa` → 0.9.4+fork 整合构建 `de714ead` →
 现装（同 vc31，含 big value 字号改动）`2558313e`。

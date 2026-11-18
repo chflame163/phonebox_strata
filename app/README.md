@@ -6,7 +6,7 @@
 `../phone-behavior/README.md`）。工程根就是这个目录：`gradlew` 在这层，主模块在 `app/app/`，
 面板前端是打包进 APK 的 WebView 资产（`app/app/src/main/assets/www/`，纯 JS，无 npm 构建步骤）。
 
-## 相对上游 0.9.4 的全部改动（fork 清单）
+## 相对上游 0.9.4 的全部本地改动清单
 
 | 文件 | 改动 |
 |---|---|
@@ -16,7 +16,7 @@
 | `app/app/src/main/assets/www/widgets/basic.js` | `fitBigValue()`：big value 每次渲染实测宽度，真超宽才按比例缩字号（保底 10 px）；topprocs 空表地板 |
 | `app/app/src/main/assets/www/style.css` | big value 字号基数 `min(56cqh,24cqw)`/700 字重 + `@container (max-height:78px)` 矮卡减 chrome 税 |
 | `app/app/build.gradle.kts` | `versionCode 31`、`versionName "0.9.4+fork"`（不再与上游互相踩降级） |
-| `gradle/wrapper/gradle-wrapper.properties` | distributionUrl 换腾讯镜像（有意保留进主线，见 `docs/CODE-SOURCES.md` 决策记录） |
+| `gradle/wrapper/gradle-wrapper.properties` | distributionUrl 换腾讯镜像（国内网络构建加速，有意保留） |
 
 原理与数据流见 `../docs/ARCHITECTURE.md` §2/§3；改动动因的完整叙事在
 `../docs/UPSTREAM-CHANGELOG.md` 的 Unreleased 一节。

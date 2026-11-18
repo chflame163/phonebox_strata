@@ -1,36 +1,28 @@
 # 代码来源与谱系（全新仓库，但代码不是凭空写的）
 
 本仓库是 2026-11-18 从运行中的现场资产**重新整理**出来的全新本地 git 仓库（无任何历史提交）。
-旧 GitHub 仓库 `chflame163/phonebox` 已被删除，最终源码从服务器 `~/phonebox`（当时唯一存有终态
-git 对象的地方，分支 `main-anonymized`，tip `c348e8a`）以 `git archive` 取出后按功能目录重组。
+最终源码从服务器 `~/phonebox`（分支 `main-anonymized`，tip `c348e8a`） 取出后按功能目录重组。
 
 ## 上游项目
 
 - 主体来自 **https://github.com/ersinkoc/phonebox**（MIT，Copyright (c) 2026 Ersin KOÇ）。
-  本仓库 `app/`（= 上游 `android/`）与 `agent/` 的基线是上游 **`d15399d`（v0.9.4，2026-11-11）**；
-  更早的 fork 快照基于 `922f85d`（v0.9.3）。根目录 `LICENSE` 即上游 MIT 原文，全部衍生改动同受
-  该许可证约束。上游 fork 链上的版本沿革见 `docs/UPSTREAM-CHANGELOG.md`（其中 `Unreleased`
-  一节 = 本 fork 的改动摘要）。
-- fork 的全部改动：11-15 由 `power-standby-suite@42ec5f4`（自 0.9.3 生长的一条独立线）经三方合并
-  （`read-tree` plumbing，merge commit `9352132`）并入 0.9.4 主干，另加一笔放宽上游 CI 断言的
-  `7b2f430`（`tools/check-release.py` 容忍 versionName 的 `+fork` 后缀）；11-18 凌晨完成全仓脱敏
-  并重写历史为 42 个提交（tip `c348e8a`，已推送后仓库删除）。合并验收：`dotnet test 331/331`、
-  `check-release PASS`、`assembleRelease` 通过。**本仓库不再计划与上游继续合流。**
-- 曾向上游提交 **PR #32**（`standby-feature`@`1c9239d`，为 `display.standby = off|power|data`
-  上游化方案）与 issue #30；作者长期未响应，故 fork 自维持，PR 素材（lean 版 patch 与 review
-  修复）留在服务器归档，未入本仓库。
+  本仓库 `app/`（= 上游 `android/`）与 `agent/` 的基线是上游 **`d15399d`（v0.9.4，2026-11-11）**。
+- 根目录 `LICENSE` 即上游 MIT 原文，全部衍生改动同受该许可证约束。上游版本沿革见
+  `docs/UPSTREAM-CHANGELOG.md`（其中 `Unreleased` 一节 = 本项目改动摘要）。
+
+  
 
 ## 各目录的来源
 
-| 目录 | 来源 |
-|---|---|
-| `app/` | 上游 `android/` 工程 + fork 手机侧改动（power-standby 数据判据、事件唤醒、深睡、断流地板网、big value 字号自适应） |
-| `agent/` | 上游 `agent/` + fork 后台改动（pushItems 随 1 Hz 状态帧、冷启动/停机地板 `Floored`/`SealAndFloorAll`、powerStandbyDelay 默认 5 s）+ 上游测试套件 |
-| `panel/`、`phone-behavior/`、`plug-control/power-read/` | 旧 fork 仓库 `tools/{panel-metrics,power-standby,charge-guard}` 中的**终态**脚本与 unit（原 60 余个 patch/TESTLOG/截图归档未入本仓库，见下文“归档在哪”） |
-| `plug-control/plug-delay/`、`plug-control/docs/` | 原独立项目「Ubuntu服务器联动群晖NAS控制智能插座」（自研，纯标准库判决器 + python-miio 执行），其 README/RESTORE 内容并入本仓库文档 |
-| `tools/` | 旧 fork `tools/` 的上游开发小工具（check-release / demo-server / smoke-agent / ui-tests）+ 构建配方 `build-android.sh`（原 `pb_build.sh`，路径已适配新布局）+ 还原脚本 |
-| `docs/UPSTREAM-CHANGELOG.md` | 上游 `CHANGELOG.md` 原文（顶部加出处说明） |
-| `artifacts/` | 当前在装的 APK（编译产物，指纹见该目录 README） |
+| 目录                                                    | 来源                                                                                                                                                                   |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app/`                                                  | 上游 `android/` 工程 + 本项目手机侧改动（power-standby 数据判据、事件唤醒、深睡、断流地板网、big value 字号自适应）                                                     |
+| `agent/`                                                | 上游 `agent/` + 本项目后台改动（pushItems 随 1 Hz 状态帧、冷启动/停机地板 `Floored`/`SealAndFloorAll`、powerStandbyDelay 默认 5 s）+ 上游测试套件                       |
+| `panel/`、`phone-behavior/`、`plug-control/power-read/` | 现场部署在跑的**最终态**脚本与 systemd unit（原 60 余个 patch/TESTLOG/截图开发归档未入本仓库，见下文“归档在哪”）               |
+| `plug-control/plug-delay/`、`plug-control/docs/`        | 原独立项目「Ubuntu服务器联动群晖NAS控制智能插座」（自研，纯标准库判决器 + python-miio 执行），其 README/RESTORE 内容并入本仓库文档                                     |
+| `tools/`                                                | 上游开发小工具（check-release / demo-server / smoke-agent / ui-tests）+ 构建配方 `build-android.sh`（原 `pb_build.sh`，路径已适配新布局）+ 还原脚本 |
+| `docs/UPSTREAM-CHANGELOG.md`                            | 上游 `CHANGELOG.md` 原文（顶部加出处说明）                                                                                                                             |
+| `artifacts/`                                            | 当前在装的 APK（编译产物，指纹见该目录 README）                                                                                                                        |
 
 ## 上游自带但未搬进本仓库的东西
 
@@ -63,7 +55,7 @@ git 对象的地方，分支 `main-anonymized`，tip `c348e8a`）以 `git archiv
 
 ## 开发过程归档在哪（本仓库“只留最终态”舍掉的部分）
 
-旧 fork 仓库（已删的 GitHub）与服务器 `~/phonebox` 本地 git 的全部提交历史；服务器
+服务器 `~/phonebox` 本地 git 的全部提交历史与脱敏前档案；服务器
 `/mnt/<data-disk>/temp/phonebox-*`、`pb-*` 各目录里的 patch 脚本、TESTLOG 实测记录、逐秒时间线
 CSV 与截图证据（2026-11-12 ~ 11-18 每一轮改动的验收现场）；插座联动项目本地 git（含未脱敏原件
 `device_list.txt`、旧版硬编码 `nas_off/on/get.py`）。要追任何一条“当初为什么这么做”，去这些

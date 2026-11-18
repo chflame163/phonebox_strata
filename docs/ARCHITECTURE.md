@@ -25,7 +25,7 @@
 
 引擎与插座的读数全部经 `POST /api/push/<key>`（agent 侧 loopback 免鉴权；LAN 走 :8766 + token）
 进入 agent 的 `PushStore`（TTL 过期自动消失、持久化 `data.json`），再随 agent 的 **1 Hz SSE
-状态帧 `state.pushItems`** 下发到手机——没有“每次变化多拉一刀 GET”的二次请求（fork 改动，
+状态帧 `state.pushItems`** 下发到手机——没有“每次变化多拉一刀 GET”的二次请求（本项目改动，
 versionName 0.9.4+fork）。面板共 7 个 push key：`strata_tps / strata_prefill / strata_ctx /
 strata_state / gpu_power / vram_gb / plug_power`，payload 一律带 `level`（着色）与 `ttl`，
 阈值集中在 collector 文件头。契约与显示参数表见 `panel/README.md`。
