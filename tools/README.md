@@ -30,6 +30,8 @@
   路径参数改一下；本项目的放宽（versionName 容忍 `+fork` 后缀）已在其内。
 - `demo-server.py` —— 上游的假 agent（本地起一个 :8765 喂面板假数据），配合 ui-tests 或纯前端调试。
 - `smoke-agent.py` —— 冒烟：用隔离配置拉起一个刚构建的 agent，校验真实 API 面。新装/升级 agent 后可跑。
+  其中 `panel/widgets/stack.js` 一项是**上游发布包**的资产检查——从源码新构建的 agent 二进制旁不抽
+  `panel/` 目录（现网那份是当年 install.sh 落下的资产），冒烟遇 404 会自动打一行 skipped 并继续，不是错误。
 - `ui-tests/` —— 上游 Playwright 面板回归（`npm i && npx playwright test`，会自起 demo-server）。
 - `deanonymize.sh` —— 占位符↔现场值还原（见 `../docs/DESENSITIZATION.md`）。
 

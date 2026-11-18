@@ -5,8 +5,12 @@
 | `PhoneBox-0.9.4+fork-vc31.apk` | 面板手机现装版本。**md5 `2558313ed6a0a438d84849976f20395d`**；包名 `net.oxog.phonebox.deskpanel`；versionCode **31**，versionName **0.9.4+fork**（minSdk 28 / target 35） |
 
 从零部署时可以直接装这个 APK 完成“Step 4”，也可以按 `../app/README.md` 的编译路径从源码构建
-（两者产物应逐字节一致，构建配方见 `../tools/build-android.sh`；编译路径是正解，本 APK 只是
-免编译的现场快照）。
+（构建配方见 `../tools/build-android.sh`；编译路径是正解，本 APK 只是免编译的现场快照）。
+
+**复现判据（2026-11-18 dry-run 实测）**：全新克隆 + 配方重建的 APK 与入库版 **63 个 zip 条目的
+顺序、CRC、日期 100% 一致**，包名/versionCode/versionName 三要素一致；但**整文件 md5 不同**——
+差异只在签名打包段（时间戳类），跨机器重编的 md5 天然互不相等。所以验收看**条目 CRC + 身份三
+要素**，别要求逐字节 md5 一致。
 
 ## 安装与签名注意
 

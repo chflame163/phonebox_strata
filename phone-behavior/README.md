@@ -29,10 +29,13 @@ BIOS **ErP** 开（关机断 USB 5V）；手机 kiosk/授权/root 设置见 `../
 
 ```bash
 mkdir -p ~/bin && cp standby/pb-sleep.sh standby/pb-wake.sh ~/bin/ && chmod +x ~/bin/pb-*.sh
-# pb-sleep.sh 里 <serial> 是裸占位，必须换真值（或整体用 ../tools/deanonymize.sh 还原）；
-# pb-wake.sh 读 PB_SERIAL 环境变量（~/.config/pb_hosts.env），默认位也是占位符。
+SER=$(adb devices | sed -n 2p | cut -f1)                      # 手机序列号（=<serial> 的真值）
+sed -i "s|<serial>|$SER|" ~/bin/pb-sleep.sh                   # 裸占位：不改也能跑，但改不到设备
+sed -i "s|<serial>|$SER|" ~/bin/pb-wake.sh                    # 或留 ${PB_SERIAL:-…} 默认位、由环境给值
 sudo cp standby/phonebox-sleep.service standby/phonebox-wake.service /etc/systemd/system/
-# 单元里 /home/<user> 与 Environment=HOME= 换成跑 adb 授权的那个用户（root 服务借用其 ~/.android 密钥）
+# 单元里 /home/<user> 两处（ExecStop/ExecStart 与 Environment=HOME）= 跑 adb 授权的那个用户，
+# root 服务借用它的 ~/.android 密钥；$USER 在你自己的 shell 里展开为部署用户名，正好
+sudo sed -i "s|<user>|$USER|g" /etc/systemd/system/phonebox-sleep.service /etc/systemd/system/phonebox-wake.service
 sudo systemctl daemon-reload && sudo systemctl enable --now phonebox-sleep phonebox-wake
 ```
 
@@ -73,7 +76,10 @@ user 级 oneshot，boot+120 s/+300 s 两拍抓 wakefulness/focus/logcat 当场 s
 
 ```bash
 mkdir -p ~/bin && cp charge-guard/pb_chargeguard.sh ~/bin/ && chmod +x ~/bin/pb_chargeguard.sh
+SER=$(adb devices | sed -n 2p | cut -f1)
+sed -i "s|<serial>|$SER|" ~/bin/pb_chargeguard.sh            # PB_SERIAL 默认位；systemd 不会自动 source pb_hosts.env，所以直接 sed
 mkdir -p ~/.config/systemd/user && cp charge-guard/pb-chargeguard.{service,timer} ~/.config/systemd/user/
+sed -i "s|<user>|$(id -un)|g" ~/.config/systemd/user/pb-chargeguard.service
 systemctl --user daemon-reload && systemctl --user enable --now pb-chargeguard.timer
 ~/bin/pb_chargeguard.sh status|calib weekly|calib qtr|on|off|reset   # 手动口
 ```

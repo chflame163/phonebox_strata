@@ -33,7 +33,7 @@ Auto-discovers the running online serve (process running serve/server.py) for it
 On any read failure it skips the affected push so the last value expires by its ttl.
 (cpu_power / power_total were dropped on 2026-11-12 per user request; vram_pct came back with the VRAM widget.)
 """
-import json, glob, subprocess, time, urllib.request
+import json, glob, os, subprocess, time, urllib.request
 
 AGENT = "http://127.0.0.1:8765"
 FALLBACK_KEY = os.environ.get("PB_STRATA_FALLBACK_KEY", "REPLACE-WITH-STRATA-API-KEY")

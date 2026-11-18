@@ -19,8 +19,9 @@
 ## 构建
 
 ```bash
-cd agent && dotnet build -c Release            # TFM net10.0（csproj 里的 windows TFM 仅 Windows 发行用）
-dotnet test -c Release                         # 331 个测试全绿是本仓库验收线
+cd agent
+dotnet build -c Release PhoneBox.Agent        # agent/ 根下没有 sln 且躺着两个工程——**必须指到工程目录**（TFM net10.0）
+dotnet test  -c Release PhoneBox.Agent.Tests  # 331 个测试全绿是本仓库验收线
 # 产物在 agent/PhoneBox.Agent/bin/Release/net10.0/ 顶层：apphost PhoneBoxAgent、
 # PhoneBoxAgent.dll、config.default*.json、templates.json、widgets.json ——同级那 11 个文件即部署内容
 ```
@@ -31,11 +32,14 @@ dotnet test -c Release                         # 331 个测试全绿是本仓库
 
 ```bash
 mkdir -p ~/.local/share/PhoneBox/app
-cp -r agent/PhoneBox.Agent/bin/Release/net10.0/{PhoneBoxAgent,PhoneBoxAgent.dll,config.default*.json,templates.json,widgets.json} ~/.local/share/PhoneBox/app/
+cp -r agent/PhoneBox.Agent/bin/Release/net10.0/. ~/.local/share/PhoneBox/app/
+# ↑ 把该目录**顶层全部文件**拷走：`PhoneBoxAgent.deps.json` 与 `.runtimeconfig.json` 同样是 dotnet
+#   运行必需（别按“七个名字”挑着拷）；`.pdb`、嵌套的 `linux-x64/` 旧打包残留捎带无妨。
+#   2026-11-18 dry-run 对账：构建目录与现网在用目录 11 个文件逐名一致，可整目录照搬。
 # 覆盖正在跑的文件用 cp --remove-destination（否则 ETXTBSY）
 loginctl enable-linger <user>                                  # headless 常驻的关键
 mkdir -p ~/.config/systemd/user && cp systemd/phonebox.service ~/.config/systemd/user/
-# 单元里 /home/<user> 两处换成真实家目录（或 tools/deanonymize.sh 还原）
+sed -i "s|<user>|$(id -un)|g" ~/.config/systemd/user/phonebox.service   # 单元不 sed 就 enable，systemd-analyze verify 会报 Command 不存在
 systemctl --user daemon-reload && systemctl --user enable --now phonebox
 ```
 

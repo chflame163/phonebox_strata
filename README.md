@@ -91,10 +91,11 @@ gradle 8.11.1 / platform-tools / python-miio 0.5.12 / LineageOS 镜像及 md5 / 
 `tools/build-android.sh` 编译（`app/README.md`）。装完设 kiosk 桌面 + `screen_off_timeout=10000`。
 验收：面板上屏、`mCurrentFocus` 为 HomeAlias。
 
-**Step 5 息屏/唤醒钩子**：按 `phone-behavior/README.md` §1（`pb-sleep.sh` 的 `<serial>` 换真值、
-两个系统 unit enable）。验收 = 文档里的“三场景”。
+**Step 5 息屏/唤醒钩子**：按 `phone-behavior/README.md` §1——脚本与单元里的 `<serial>`、`<user>`
+都要先 sed 成真值（漏 sed 的话 `systemctl` 起不来或脚本抓不到设备），再 enable。
+验收 = 文档里的“三场景”。
 
-**Step 6 充电策略**：按 `phone-behavior/README.md` §2（脚本进 `~/bin`、user timer enable）。
+**Step 6 充电策略**：按 `phone-behavior/README.md` §2（同样先 sed 占位，再 user timer enable）。
 验收：`pb_chargeguard.sh status` 输出阶段与日程；日志开始心跳。
 
 **Step 7 指标采集**：按 `panel/README.md` §2（collector 进 `~/bin`、pushd unit enable）。
@@ -125,7 +126,8 @@ gradle 8.11.1 / platform-tools / python-miio 0.5.12 / LineageOS 镜像及 md5 / 
 
 ## 9. 测试与验证
 
-`cd agent && dotnet test`（331 全绿=本仓库验收线）；`../tools/smoke-agent.py` 冒烟真 agent；
+`cd agent && dotnet test -c Release PhoneBox.Agent.Tests`（331 全绿=验收线；**agent/ 没有 sln，
+build/test 都必须指到工程目录**，裸 `dotnet build` 会 MSB1003）；`tools/smoke-agent.py` 冒烟真 agent；
 `tools/ui-tests` 跑上游面板回归（demo-server 假 agent，离线可跑）；chargeguard 用
 `PB_ONESHOT` 注入验状态机（`phone-behavior/README.md`）；plug-delay 用短阈值三路与真关机；
 手机行为用三场景。**每次改动后的最小验收**：push keys 数量与节奏、三场景、

@@ -44,15 +44,21 @@
 tools/deanonymize.sh phone-behavior/standby/pb-wake.sh > /tmp/run.sh && bash /tmp/run.sh
 # 只看映射齐不齐
 tools/deanonymize.sh --check
-# 提交前后扫一遍真值（期望输出为空）。模式**现场从真值文件派生**、绝不把真值写进这条命令本身，
-# 否则文档自己就成了泄露点（历史上栽过两次）。例外：docs 里引用的 7/8 位短 SHA、APK md5、
-# token_extractor 的文件校验和是有意保留的“文件指纹”而非秘密；device_list.masked.* 与 *.apk 跳过。
-VALS=$(cut -d= -f2- ~/.config/pb_hosts.env ~/.config/pb_plug.env 2>/dev/null | tr -d '"' \
-  | grep -vE '^$|^<|REPLACE|REDACTED' | grep -E '^.{4,}$' | sed 's/[][.^$*]/\\&/g' | paste -sd'|') \
-  && git grep -InE "$VALS" HEAD -- ':!*.masked.*' && echo '^^ 有泄露！' || echo CLEAN-VALUES
-# （git grep 无命中时退出码非 0，所以上面是“有命中=坏”。只扫 ≥4 字符的值，短用户名交给形态扫描：）
-git grep -InE '/home/[a-z]{1,3}\b|homes/[a-z]{1,3}\b|@192|@10\.' HEAD -- ':!*.masked.*' || echo CLEAN-SHAPES
-# 提交信息也要扫： git log --format=%B | grep -nE "$VALS"
+# 提交前后扫一遍真值（期望输出为空）。模式**现场从真值文件派生**、绝不把真值写进命令本身，
+# 否则文档自己就成了泄露点（历史上栽过两次）。用“模式文件 + git grep -F”做**固定串匹配**——
+# 早先那版“sed 转义后拼 ERE”的写法实测在 Ubuntu sed 上直接报错、VALS 为空，空 VALS 会让
+# grep -E "" 匹配一切而全仓假红；模式文件法没有转义坑，还天然支持带空格的值。
+# 只扫 ≥4 字符的值（短用户名交给形态扫描）。例外：7/8 位短 SHA、APK md5、文件校验和是有意
+# 保留的“文件指纹”而非秘密；device_list.masked.* 与 *.apk 跳过。
+PF=$(mktemp); cut -d= -f2- ~/.config/pb_hosts.env ~/.config/pb_plug.env 2>/dev/null \
+  | grep -v '^#' | tr -d '"' | grep -vE '^$|^<|REPLACE|REDACTED' | grep -E '^.{4,}$' > "$PF"
+git grep -In -F -f "$PF" HEAD -- ':!*.masked.*' && echo '^^ 有泄露！' || echo CLEAN-VALUES
+# （git grep 无命中时退出码非 0，所以上面是“有命中=坏”。形态扫描写成 @(192|10\.) 是为了
+#   让这行文档自身不被自己的模式命中；短用户名/登录串形态都在这里兜底：）
+git grep -InE '/home/[a-z]{1,3}\b|homes/[a-z]{1,3}\b|@(192|10\.)' HEAD -- ':!*.masked.*' || echo CLEAN-SHAPES
+# 提交信息也要扫（-F 同用这份模式文件）：
+git log --format=%B | grep -nF -f "$PF" || echo CLEAN-MSG
+rm -f "$PF"
 ```
 
 ## 三条“裸占位会破坏语法”的自伤姿势（写文档/改脚本时保持）
