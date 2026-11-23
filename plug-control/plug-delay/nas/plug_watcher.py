@@ -80,6 +80,12 @@ class Watcher:
                         self.shutdown_at = None
                         self.next_try = 0.0
                         log("<-- %s 心跳恢复,重新武装监听(本轮关闭已复位)" % addr[0])
+                    elif (not self.fired and self.shutdown_at is not None
+                          and (now - self.last_hb) <= 2):
+                        # 倒计时期间服务器又活了(reboot 后开机、或关机被中止)-> 取消本轮待关。
+                        # last_hb 刚刷新,故 now-last_hb==0;真正停过心跳再回来走上面的 rearm 分支。
+                        self.shutdown_at = None
+                        log("<-- %s 倒计时中收到服务器心跳,取消关闭插座任务" % addr[0])
                     elif now - self.last_hb_log >= self.alive:
                         # 低频存活日志:证明心跳确实在到达(生产默认每 30s 一条)
                         self.last_hb_log = now
