@@ -68,8 +68,11 @@ sudo systemctl enable --now plug-heartbeat    # 常驻 5 s UDP 心跳
 sudo systemctl enable plug-notify             # 拉起即可；关机(ExecStop)时发 SHUTDOWN 握手×2
 ```
 
-协议就两个词：`HB <epoch>` / `SHUTDOWN <epoch>`，UDP 端口 12345（`HB_PORT` 与 NAS
-`LISTEN_PORT` 一致）。
+协议就两个词：`HB <epoch>` / `SHUTDOWN <epoch>`，UDP 端口 12345（`HB_PORT` 与 watcher
+`LISTEN_PORT`/手机 `display.plugUdpPort` 一致）。**目的地只有这一个 env**：手机版 watcher 在岗时
+`NAS_IP=<手机 Wi-Fi IP>`（当前现场值），NAS 版在岗时改回 NAS IP——换班只改这一行，服务器没有 Wi-Fi，
+单播走以太网。(11-24 首次 T2 reboot 就是因为这里还指着一台已 disabled 的机器而握手全空跑；顺带发现
+**手机重启会清掉 adb reverse**，8765 断流——已在 app 侧加自愈，见部署 C2。)
 
 ## 部署 C —— plug-delay NAS 侧（群晖 DSM 7）
 
@@ -114,6 +117,23 @@ adb -s <sn> root && adb -s <sn> shell dumpsys deviceidle whitelist +net.oxog.pho
 `REARM/CANCEL`。判决历史看两处：手机 `files/plug_watch.log`（拔电也在）与面板 System 页两卡
 （push keys `plug_delay_state`/`plug_watch_log`）。**真 off 转正只允许一次窗口**：NAS disable 已在岗、
 手机 plugDryRun=false、现场有人盯米家 App 旁路时才做。
+
+### 11-24 深夜 T2 reboot 实测记录（教训固化）
+
+真 `sudo reboot` 抓到两个只有重启才暴露的问题，均已修/已记：
+
+1. **握手目的地没换班**：`plug-delay.env` 仍指 NAS → SHUTDOWN 全空跑，手机全程 IDLE（reboot
+   本身无害，但计划路等于是零覆盖）。改 env=手机 IP + `systemctl restart plug-heartbeat`，随后
+   stop/start notify 实测 `ARM→CANCEL：UDP 心跳恢复`、HB 静默 90s 自动 `ARM`。换班口诀：**只改 env 一行**。
+2. **手机重启清 adb reverse**：面板 USB 隧道断（push failed: unexpected end of stream），且服务器
+   `adb kill-server/start-server` 会踢掉插座读数的 adb-触发单元。**现场临时** =
+   `adb -s <sn> reverse tcp:8765 tcp:8765`；**根治已部署**（11-24 深夜）：服务器
+   `/usr/local/bin/plugdelay/adb-reverse-guard.sh` + root 单元 `pb-adb-reverse-guard.service/.timer`
+   （每 30 s 校验 `adb reverse --list`、缺失即补建，开机先等设备上线 ≤120 s，已 enable）。
+   **重启后仍建议瞄一眼** guard timer 与面板 push。
+
+之后补跑 T3 全链一次通过（快速语义 delay=30/confirm=15）：`23:11:01 ARM → 23:11:41 FIRE(dry) →
+CHECK_OK(插座 value=true, 76W) → 拉起 agent → REARM`，测完阈值已回产 180/60。
 
 ### 验收（先把阈值临时改 15 s 快速验，再改回 180）
 
