@@ -64,6 +64,7 @@ class PlugWatcher(
     @Volatile private var prevPlugged = true      // plug-edge memory shared with MainActivity's receivers
     @Volatile private var lastPluggedFlag = true  // live plug state as far as the watcher knows (sticky + edges)
     @Volatile private var lastArmByUdp = false    // true when the most recent arm came from a UDP SHUTDOWN (handshake, not boot silence)
+    @Volatile private var edgeWasHb = false       // provenance of powerOffAt: HB-silence edges keep the hostDead gate
 
     companion object {
         /** BatteryManager.BATTERY_STATUS_FULL sentinel passed through batteryLevel() by MainActivity when the HAL
@@ -106,7 +107,7 @@ class PlugWatcher(
     fun onPlugEdge(plugged: Boolean) {
         prevPlugged = plugged
         if (!running) return
-        main.post { val c = readCfg(); if (c.enabled && state == State.ARMED) captureEdge(c) }
+        main.post { val c = readCfg(); if (c.enabled && state == State.ARMED) captureEdge(c, hbSilenceMs()) }
     }
 
     /** USB data-link edge from either receiver (Activity or service): link down = the host's stack stopped —
@@ -132,16 +133,32 @@ class PlugWatcher(
      *  T3/T15 field lesson (2026-11-24): on this hub wiring VBUS never truly drops AND the framework battery
      *  view can lag/stale, so the plug-edge alone is not trusted — onUsbLink(down) is the primary edge source
      *  (gadget suspend == host gone), and captureEdge fires whenever EITHER says loss. */
-    private fun captureEdge(c: Cfg) {
+    private fun captureEdge(c: Cfg, hbSilentMs: Long = -1L) {
         if (state != State.ARMED || powerOffAt != 0L) return
-        if (!pluggedNow() || usbLinkDownCount.get() > 0 && !usbLinkUp()) {
+        // Real-off field lesson (2026-11-24 late night): on this wiring VBUS never drops and USB stays "configured",
+        // so the ErP edge class is structurally DEAD here — only battery/USB-loss can satisfy the old predicate, and
+        // neither happens when the server dies while the phone keeps charging. FIRE therefore came from the
+        // handshake-fallback lane at ARM+306 s (agent-HTTP silence crossed bootClear 45 s + a tick ~126 s after
+        // the UDP heartbeat died — the countdown mis-timed by exactly that gap). Fix: heartbeat silence >= 15 s is
+        // ITSELF the loss edge (HB interval 5 s; 3 misses = the host's stack stopped talking), captured from
+        // decide()'s tick where hbAt is fresh. Reboot safety keeps its shape: any HB/agent-data resume within
+        // bootClearS still cancels the episode BEFORE delay can elapse, same semantics as the NAS design.
+        val byHb = hbSilentMs >= 15_000L
+        if (!pluggedNow() || usbLinkDownCount.get() > 0 && !usbLinkUp() || byHb) {
             powerOffAt = SystemClockElapsed.get()
+            edgeWasHb = byHb
             log("掉电沿捕获（plugged=${pluggedNow()} usb=${usbLinkUp()}），${c.delayS}s 后发火（dry=${c.dry}）")
             pushState(c, reason = "power-edge")
         }
     }
 
     private val usbLinkDownCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** UDP heartbeat freshness clock — handleUdp stamps it on every "HB" beat; the watcher's own 5-s-window truth.
+     *  Field lesson (real-off, 2026-11-24): HB silence is the ONLY structural loss edge on this wiring (VBUS never
+     *  drops, USB stays configured while the host dies) — >=15 s quiet == capture it, countdown starts NOW. */
+    @Volatile private var hbAt = 0L
+    private fun hbSilenceMs(): Long = if (hbAt == 0L) -1L else SystemClockElapsed.get() - hbAt
 
     /** "Still powered" per the phone's own battery — the service refreshes this from its sticky read every tick. */
     private fun pluggedNow(): Boolean = lastPluggedFlag
@@ -215,10 +232,13 @@ class PlugWatcher(
                 lastArmByUdp = true
                 arm(c, "UDP SHUTDOWN 握手", fromBoot = false)
             } else if (state == State.FIRED) log("fired 态收到 $payload（已发火，忽略）")
-            payload.startsWith("HB") -> when (state) {
-                State.ARMED -> cancel("UDP 心跳恢复")
-                State.FIRED -> rearm(c, "UDP 心跳恢复")
-                else -> {}
+            payload.startsWith("HB") -> {
+                hbAt = SystemClockElapsed.get()   // beat clock: any resume also proves the host is back
+                when (state) {
+                    State.ARMED -> cancel("UDP 心跳恢复")
+                    State.FIRED -> rearm(c, "UDP 心跳恢复")
+                    else -> {}
+                }
             }
         }
     }
@@ -251,6 +271,8 @@ class PlugWatcher(
         }
         val now = SystemClockElapsed.get()
         val silentFor = if (agentDataAt() == 0L) 0L else now - agentDataAt() // no frame yet: treat as fresh (boot phase)
+        // heartbeat clock: UDP HB frames land in hbAt via handleUdp; >=15 s of silence == the host stopped talking.
+        val hbQuiet = hbSilenceMs()
         val usbUp = usbLinkUp()
         // The ErP edge itself is captured by onPlugEdge (Activity receiver, fast path) and decide()'s next tick;
         // here we only enforce §4.2's timing gate: an armed-with-edge episode may not fire before the phone has
@@ -276,9 +298,13 @@ class PlugWatcher(
                     return
                 }
                 // §4.2 off 语义：掉电沿(或握手 arm 后 agent 确已死透)+delay；无沿则等 stale 兜底。
+                captureEdge(c, hbQuiet)   // tick-sampled edge: HB silence >=15s arms the countdown immediately
                 val edgeAgo = if (powerOffAt == 0L) -1L else now - powerOffAt
                 val hostDead = silentFor >= c.bootConfirmS * 1000L   // agent 静默过 boot 确认阈值 = 主机确死
-                if (edgeAgo >= c.delayS * 1000L && silentFor >= c.bootClearS * 1000L) {
+                // HB-backed edges still need agent-death confirmation (a Wi-Fi flake must not cut the server's own
+                // supply); structural edges (plug-loss / USB-gadget-death) are self-proving and fire on delay alone.
+                val edgeProven = if (edgeWasHb) silentFor >= c.bootConfirmS * 1000L else true
+                if (edgeAgo >= c.delayS * 1000L && edgeProven) {
                     fire(c, "掉电沿后已满 ${c.delayS}s")
                 } else if (powerOffAt == 0L && armedAgo >= c.delayS * 1000L && hostDead) {
                     // 握手 arm + delay 过点 + agent 确死 — ErP/hub 沿没捕获（本 wiring VBUS 假上电）时的兜底火路

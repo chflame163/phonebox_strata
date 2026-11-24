@@ -135,6 +135,17 @@ adb -s <sn> root && adb -s <sn> shell dumpsys deviceidle whitelist +net.oxog.pho
 之后补跑 T3 全链一次通过（快速语义 delay=30/confirm=15）：`23:11:01 ARM → 23:11:41 FIRE(dry) →
 CHECK_OK(插座 value=true, 76W) → 拉起 agent → REARM`，测完阈值已回产 180/60。
 
+**真 off 第一轮（11-24 深夜，dry=false）——断电成功、时序偏晚、自启未触发**：
+`23:36:37 ARM(握手) → 23:41:44 FIRE "掉电沿后已满 180s" → OFF_OK verify value:false（插座真断）`。
+现场观察 ≈5 分钟才断电——根因：本 wiring 下 VBUS 不塌、USB 恒 configured，**结构性掉电沿永远捕不到**，
+fire 走的是握手兜底路，倒计时从"agent HTTP 静默满 bootClear(45s)+tick"起算（晚 ~126s）。修复=心跳即沿：
+`handleUdp` 记 HB 拍钟，armed 下 HB 静默 ≥15s 立即 `掉电沿捕获`（HB-backed 边仍保留 hostDead 闸防 Wi-Fi
+抖动切自己电；plug-loss/USB-gadget 两类结构边自证、只等 delay）。演练实拍：`23:57:05 ARM → 23:57:13 掉电沿捕获
+(plugged=false usb=true, HB 静默) → 23:57:40 CANCEL(心跳恢复)`——沿快了 8s、取消路毫发无损。
+**BIOS AC-back 自启经用户亲手验证有效（插座通电即开机）**；当晚断电后 ~4 分钟没醒是因为来电时机/或那次恰为
+standby 假死，按电源键即回——转正验收以「FIRE→OFF_OK(False)→整机断电」为硬判据，自启回来 REARM 为软判据。
+观测器教训：ping 用 `ping -c1`（bash `/dev/tcp` 写法在 sh 下必假 DOWN，首轮三行后自己退场）。
+
 **T2 第二轮真 reboot（11-24 深夜，env 已指手机）——计划路首次实拍**：
 `23:25:28 ARM(UDP SHUTDOWN) → 23:25:58 FIRE(dry, arm+30s=快速 delay 到点) → CHECK_OK(value=true,136W)
 → 23:26:28 REARM(agent 随服务器 23:26:06 回来了)`。手机整机没断电、插座全程 on，dry 语义兜住了危险面。
