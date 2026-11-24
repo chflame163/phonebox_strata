@@ -17,8 +17,9 @@ android {
         applicationId = "net.oxog.phonebox.deskpanel"
         minSdk = 28
         targetSdk = 35
-        versionCode = 31
-        versionName = "0.9.4+fork"
+        // vc32 (2026-11-24): phone-side plug-delay watcher (NAS successor) — Miio/PlugWatcher/PlugWatchService
+        versionCode = 32
+        versionName = "0.9.5+fork"
     }
 
     signingConfigs {

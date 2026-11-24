@@ -71,6 +71,8 @@ class MainActivity : Activity(), SensorEventListener {
     @Volatile private var standbyEnabled = true
     @Volatile private var standbyDelayMs = 30_000L
     @Volatile private var pluggedIn = true        // power state: used to time probes, not to decide standby
+    // fork 2026-11-24 (plug-delay phone watcher): companion-exposed hooks so PlugWatchService reads the same clocks
+    // this Activity's standby logic already maintains — one source of truth for agent silence and USB liveness.
     @Volatile private var agentDataAt = 0L        // elapsedRealtime of the last answer from the agent, either route
     @Volatile private var usbLinkUp = false       // the phone sees an enumerated USB data link => that computer is up
     @Volatile private var hostAlive = true        // what standby acts on; reconciled by healthTick
@@ -106,6 +108,19 @@ class MainActivity : Activity(), SensorEventListener {
                     ?: BatteryManager.BATTERY_STATUS_UNKNOWN
                 val plugged = PowerReceiver.edge(intent, "runtime") ?: return
                 android.util.Log.i("PhoneBox", "plug edge via battery-changed: plugged=" + plugged)
+                // fork 2026-11-24: the ErP edge feeds the plug watcher too. The service instance can be dead when
+                // the Activity lives (crash-restart of a START_STICKY service leaves it null until next start),
+                // so re-assert startService here — cheap, idempotent, and revives the watcher exactly at the moment
+                // its job begins. POSTED to the main thread: Activity context only allows started-service starts.
+                val svcIntent = Intent(this@MainActivity, PlugWatchService::class.java)
+                mainHandler.post {
+                    // the Activity itself is a started service host (fixes the dead-instance edge case):
+                    runCatching { startService(svcIntent) }
+                    try {
+                        startForegroundService(svcIntent)   // API 26+: guarantees foreground type specialUse in manifest
+                    } catch (_: Exception) {}
+                    PlugWatchService.notifyEdge(this@MainActivity, plugged)
+                }
                 mainHandler.post { onPowerChanged(plugged) }
             }
         }
@@ -164,7 +179,7 @@ class MainActivity : Activity(), SensorEventListener {
                 val up = intent?.getBooleanExtra("configured", false) == true ||
                     intent?.getBooleanExtra("connected", false) == true
                 if (up == usbLinkUp) return
-                usbLinkUp = up
+                stampUsbLink(up)
                 android.util.Log.i("PhoneBox", "USB data link -> $up (reconciling now)")
                 mainHandler.removeCallbacks(healthTick)
                 mainHandler.post(healthTick)
@@ -182,7 +197,7 @@ class MainActivity : Activity(), SensorEventListener {
      *  lets the request land) after the panel has slept. */
     private val healthTick = object : Runnable {
         override fun run() {
-            usbLinkUp = readUsbLink()
+            stampUsbLink(readUsbLink())
             reconcileStandby()
             val interactive = try {
                 getSystemService(PowerManager::class.java)?.isInteractive ?: true
@@ -250,12 +265,24 @@ class MainActivity : Activity(), SensorEventListener {
             try {
                 val r = link.request("GET", "/api/state")
                 runCatching { r.body.use { it.readBytes() } }
-                if (r.code < 400) agentDataAt = SystemClock.elapsedRealtime()
+                if (r.code < 400) stampAgentData()
             } catch (e: Exception) {
             } finally {
                 runCatching { held?.release() }
             }
         }
+    }
+
+    /** fork 2026-11-24: single clock writer — instance field for standby + companion shared fields for the plug watcher. */
+    private fun stampAgentData() {
+        agentDataAt = SystemClock.elapsedRealtime()
+        sharedAgentDataAt = agentDataAt
+    }
+
+    /** USB link edge/level: mirror to the companion so a recreated Activity never resets "the host is up". */
+    private fun stampUsbLink(up: Boolean) {
+        usbLinkUp = up
+        sharedUsbLinkUp = up
     }
 
     /**
@@ -320,7 +347,7 @@ class MainActivity : Activity(), SensorEventListener {
         link = AgentLink(this)
         stream = AgentStream(link) { event, data ->
             // "close" is the stream's own goodbye, not an answer from the agent; everything else is proof of life.
-            if (event != "close") agentDataAt = SystemClock.elapsedRealtime()
+            if (event != "close") stampAgentData()
             val js = "window.onAgentStream && window.onAgentStream(${JSONObject.quote(event)}, ${JSONObject.quote(data)})"
             runOnUiThread { web.evaluateJavascript(js, null) }
         }
@@ -373,10 +400,17 @@ class MainActivity : Activity(), SensorEventListener {
         registerUsbLinkReceiver()
         // Start from "the computer is there" and let the polls correct it: the first request needs a moment, while the
         // USB data link is known at once, so a phone booting into an unpowered hub still goes dark shortly after.
-        agentDataAt = SystemClock.elapsedRealtime()
-        usbLinkUp = readUsbLink()
+        stampAgentData()
+        stampUsbLink(readUsbLink())
         hostAlive = true
         mainHandler.postDelayed(healthTick, HEALTH_POLL_MS)
+        // fork 2026-11-24: the plug-delay watcher (NAS successor) runs as a foreground service beside the kiosk home.
+        instance = this
+        try {
+            startService(Intent(this, PlugWatchService::class.java))
+        } catch (e: Exception) {
+            android.util.Log.w("PhoneBox", "plug watcher service failed to start: $e")
+        }
     }
 
     /**
@@ -394,7 +428,7 @@ class MainActivity : Activity(), SensorEventListener {
         val query = req.url.encodedQuery?.let { "?$it" } ?: ""
         val r = link.request(req.method, path + query)
         // Whatever the panel gets back, the computer behind it is running — whichever transport carried it.
-        if (r.code < 400) agentDataAt = SystemClock.elapsedRealtime()
+        if (r.code < 400) stampAgentData()
         val ct = r.contentType ?: "application/octet-stream"
         val mime = ct.substringBefore(';').trim()
         val charset = if (ct.contains("charset=")) ct.substringAfter("charset=").trim() else null
@@ -464,6 +498,7 @@ class MainActivity : Activity(), SensorEventListener {
     }
 
     override fun onDestroy() {
+        if (instance === this) instance = null
         mainHandler.removeCallbacksAndMessages(null)
         probes.shutdownNow()
         powerReceiver?.let { runCatching { unregisterReceiver(it) } }
@@ -665,6 +700,32 @@ class MainActivity : Activity(), SensorEventListener {
     }
 
     companion object {
+        // fork 2026-11-24: static bridges for PlugWatchService (started alongside; both read this Activity's state,
+        // never duplicate it). One source of truth for agent silence and USB liveness. The *shared* clocks are the
+        // companion's own volatile fields — NOT per-Activity instances: a config push restarts the Activity (and
+        // resets its onCreate clock), which used to silently resurrect the watcher's "data is fresh" cancel path
+        // mid-countdown (T3 dry-run lesson, 11-24). SSE/proxy/probe all stamp these; instance is only for UI ops.
+        @Volatile var instance: MainActivity? = null
+
+        /** shared agent-silence clock (elapsedRealtime of the last byte from the agent, either route). */
+        @Volatile @JvmStatic var sharedAgentDataAt = 0L
+
+        /** shared USB-link verdict written by the Activity's healthTick/receiver and read via usbLinkUpOf. */
+        @Volatile @JvmStatic var sharedUsbLinkUp = false
+
+        // fork 2026-11-24 fix #2 (T3/T20 dry-run): expose the shared clocks as PLAIN @JvmStatic functions. The old
+        // "property whose getter returns a lambda" pattern shipped a getter that ran at call time but across
+        // Activity/process churn proved fragile to reason about; PlugWatchService now binds ::sharedAgentClock /
+        // ::sharedUsbClock directly, so the cancel path can never read an instance-reset fresh clock again.
+        @JvmStatic fun sharedAgentClock(): Long = sharedAgentDataAt
+        @JvmStatic fun sharedUsbClock(): Boolean = sharedUsbLinkUp
+
+        /** agentDataAt of the live panel Activity, or 0 before it is created — PlugWatchService treats 0 as "fresh". */
+        val agentDataAtOf: (() -> Long) get() = ::sharedAgentClock
+
+        /** current USB data-link verdict of the live panel Activity (false before onCreate). */
+        val usbLinkUpOf: (() -> Boolean) get() = ::sharedUsbClock
+
         // The agent pushes "state" every second and AgentStream abandons a silent connection after 8s, so this much
         // quiet means the computer is gone rather than briefly busy. Measured with SystemClock.elapsedRealtime, because
         // a phone that has not kept time yet can jump its wall clock by hours.

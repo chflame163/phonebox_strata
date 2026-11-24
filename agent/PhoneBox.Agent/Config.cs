@@ -136,6 +136,29 @@ public sealed class DisplayConfig
     public int MinDwellSec { get; set; } = 15;
     /// <summary>A rule keeps its page at most this many minutes, then the idle return may take over; 0 = as long as the rule lasts.</summary>
     public int HoldMaxMin { get; set; } = 30;
+
+    // ---- plug-delay watcher (phone app side, fork 2026-11-24) — see plug-control/plug-delay/phone/README.md.
+    // The agent merely stores and ships these to the phone (the state frame's display.* ride); the watcher's own
+    // decisions live in the app. Defaults match the 开发计划 §4 table; dry=true until the user approves the one real off.
+
+    /// <summary>Phone-side plug watcher master switch (the NAS twin must stay disabled while this is on — 互斥二选一).</summary>
+    public bool PlugWatcher { get; set; } = false;
+    /// <summary>Dry-run: judge, log and push exactly like production but never write the plug (get_properties still runs).</summary>
+    public bool PlugDryRun { get; set; } = true;
+    /// <summary>Seconds to wait after the ErP power-loss edge before cutting the plug (NAS twin's SHUTDOWN_DELAY).</summary>
+    public int PlugDelaySec { get; set; } = 180;
+    /// <summary>Agent silence that CONFIRMS a planned shutdown when armed from boot bookkeeping (reboot stays silent below this).</summary>
+    public int PlugBootConfirmSec { get; set; } = 60;
+    /// <summary>Silence under this after an arm means the server came back — cancel the countdown (the NAS-proven cancel path).</summary>
+    public int PlugBootClearSec { get; set; } = 45;
+    /// <summary>Refuse to arm below this battery percent — cutting the server while the judge itself starves is pointless.</summary>
+    public int PlugCritLevel { get; set; } = 8;
+    /// <summary>UDP port for the server's HB/SHUTDOWN redundancy frames (same contract as the NAS watcher).</summary>
+    public int PlugUdpPort { get; set; } = 12345;
+    /// <summary>xiaomi.plug.04 LAN address (runtime credential, never committed — DESENSITIZATION keeps it a placeholder).</summary>
+    public string? PlugIp { get; set; }
+    /// <summary>32-hex miio token for the plug (same placement rule as PlugIp).</summary>
+    public string? PlugToken { get; set; }
 }
 
 public sealed class LanConfig

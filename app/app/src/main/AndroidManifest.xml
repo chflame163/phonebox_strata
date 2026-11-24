@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -7,6 +8,9 @@
     <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
     <!-- 这台手机只为面板服务：熄屏深睡时清掉其他应用的后台进程（普通权限，装完即生效） -->
     <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+    <!-- fork 2026-11-24 plug-delay 手机判决器：前台 service + Wi-Fi 高优先锁（深睡里 UDP/插座往返的保命路，§4.3-1） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.WIFI_CTRL" tools:ignore="ProtectedPermissions" />
 
     <application
         android:icon="@mipmap/ic_launcher"
@@ -52,5 +56,15 @@
                 <action android:name="android.intent.action.BATTERY_CHANGED" />
             </intent-filter>
         </receiver>
+        <!-- fork 2026-11-24：plug-delay 判决器从 NAS 迁入手机。前台 service 常驻（面板本就是 kiosk home，
+             START_STICKY + 低优先通知）；specialUse=判决监听这一用途（API30+ 类型字段，Lineage18 忽略、兼容无害）。 -->
+        <service
+            android:name=".PlugWatchService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="plug-delay-shutdown-watcher" />
+        </service>
     </application>
 </manifest>
