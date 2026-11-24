@@ -135,6 +135,14 @@ adb -s <sn> root && adb -s <sn> shell dumpsys deviceidle whitelist +net.oxog.pho
 之后补跑 T3 全链一次通过（快速语义 delay=30/confirm=15）：`23:11:01 ARM → 23:11:41 FIRE(dry) →
 CHECK_OK(插座 value=true, 76W) → 拉起 agent → REARM`，测完阈值已回产 180/60。
 
+**T2 第二轮真 reboot（11-24 深夜，env 已指手机）——计划路首次实拍**：
+`23:25:28 ARM(UDP SHUTDOWN) → 23:25:58 FIRE(dry, arm+30s=快速 delay 到点) → CHECK_OK(value=true,136W)
+→ 23:26:28 REARM(agent 随服务器 23:26:06 回来了)`。手机整机没断电、插座全程 on，dry 语义兜住了危险面。
+**定性结论：SHUTDOWN 握手是 fire-and-forget，reboot/poweroff 在 watcher 眼里不可区分**——开机若 <delay
+宽限内回来则 CANCEL（NAS 版靠 reboot_grace=90s + 默认 delay=180s 兜这个场景）；手机在岗时**绝不要拿真
+reboot 测取消路**，需要重启请先顺手 `systemctl stop plug-heartbeat`（静默满 stale 才兜底 fire）。
+真 off 转正窗口的判据链就是本条时序的 dry=false 版。测完阈值已回产 180/60、CFG 快照确认 delay=180。
+
 ### 验收（先把阈值临时改 15 s 快速验，再改回 180）
 
 1. watcher 日志持续“alive”（收到心跳）。2. 异常路：服务器 `systemctl stop plug-heartbeat` →
