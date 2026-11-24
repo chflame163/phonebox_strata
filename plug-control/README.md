@@ -127,10 +127,10 @@ adb -s <sn> root && adb -s <sn> shell dumpsys deviceidle whitelist +net.oxog.pho
    stop/start notify 实测 `ARM→CANCEL：UDP 心跳恢复`、HB 静默 90s 自动 `ARM`。换班口诀：**只改 env 一行**。
 2. **手机重启清 adb reverse**：面板 USB 隧道断（push failed: unexpected end of stream），且服务器
    `adb kill-server/start-server` 会踢掉插座读数的 adb-触发单元。**现场临时** =
-   `adb -s <sn> reverse tcp:8765 tcp:8765`；**根治已部署**（11-24 深夜）：服务器
+   `adb -s <sn> reverse tcp:8765 tcp:8765`；**根治=服务器侧 guard 单元**（11-24 深夜部署并 enable）：
    `/usr/local/bin/plugdelay/adb-reverse-guard.sh` + root 单元 `pb-adb-reverse-guard.service/.timer`
-   （每 30 s 校验 `adb reverse --list`、缺失即补建，开机先等设备上线 ≤120 s，已 enable）。
-   **重启后仍建议瞄一眼** guard timer 与面板 push。
+   （每 30 s 校验 `adb reverse --list`、缺失即补建，开机先等设备上线 ≤120 s）。留存脚本已拷入本目录
+   `server/adb-reverse-guard.*`。**重启后仍建议瞄一眼** guard timer 与面板 push。
 
 之后补跑 T3 全链一次通过（快速语义 delay=30/confirm=15）：`23:11:01 ARM → 23:11:41 FIRE(dry) →
 CHECK_OK(插座 value=true, 76W) → 拉起 agent → REARM`，测完阈值已回产 180/60。

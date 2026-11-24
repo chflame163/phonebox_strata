@@ -1,0 +1,6 @@
+[Unit]
+Description=PhoneBox adb reverse(:8765) reconciler - rebuilds the USB tunnel a phone reboot wipes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/plugdelay/adb-reverse-guard.sh
