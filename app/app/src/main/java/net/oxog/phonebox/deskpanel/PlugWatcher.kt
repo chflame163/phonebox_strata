@@ -178,6 +178,9 @@ class PlugWatcher(
         val p = powerOffAt
         if (state != State.ARMED || p == 0L) return
         fireRunnable?.let { main.removeCallbacks(it) }
+        // LAN gate mirrored from decide()'s hold (see its comment): a blind phone must not event-fire either.
+        // HB freshness is the proof-of-LAN probe; handshake arms are exempt (planned shutdown proven by intent).
+        if (hbSilenceMs().let { it < 0L || it >= 15_000L } && !lastArmByUdp) return
         val a = agentDataAt()
         val silentFor = if (a == 0L) SystemClockElapsed.get() else SystemClockElapsed.get() - a   // no frame yet: treat as fully silent (boot phase never rides this lane anyway)
         val gate = if (edgeWasHb) c.bootConfirmS * 1000L - silentFor.coerceAtLeast(0L) else 0L
@@ -197,7 +200,9 @@ class PlugWatcher(
             // is a live-host weirdness; hand the verdict to decide()'s fallback branches (no unbounded churn).
             val overdue = now2 - powerOffAt >= (c2.delayS + 60) * 1000L
             if (!proven2 && !overdue) { armFireTimer(c2); return@Runnable }             // proof window still open — recheck later
-            if (now2 - powerOffAt >= c2.delayS * 1000L && proven2) fire(c2, "掉电沿后已满 ${c2.delayS}s（event）")
+            val lanOk2 = hbSilenceMs().let { it in 0..14_999L } || lastArmByUdp          // LAN gate at timer time, not capture time
+            if (now2 - powerOffAt >= c2.delayS * 1000L && proven2 && lanOk2) fire(c2, "掉电沿后已满 ${c2.delayS}s（event）")
+            else if (!lanOk2 && !overdue) { armFireTimer(c2); return@Runnable }          // went blind mid-countdown — recheck on the LAN
             // else: fall through silently — the tick owns this verdict from here on
         }
         fireRunnable = r
@@ -369,6 +374,17 @@ class PlugWatcher(
                     return
                 }
                 // §4.2 off 语义：掉电沿(或握手 arm 后 agent 确已死透)+delay；无沿则等 stale 兜底。
+                // LAN-alive gate (user call, 2026-11-25 late): every fire lane rides a miio UDP frame the phone can
+                // only deliver while its OWN Wi-Fi/LAN is up — a dead LAN means writeOff drowns in retries and the
+                // outlet stays hot anyway, so "Wi-Fi 坏了且主机也哑" now holds ARMED indefinitely (cancel still
+                // releases it when any lane recovers). SHUTDOWN-handshake arms are exempt: a planned shutdown is
+                // proven by intent (the host announced its own death seconds ago), which no Wi-Fi flake can fake.
+                val lanOk = hbQuiet in 0..14_999L          // fresh HB = my LAN path demonstrably works right now
+                val armedByHandshake = lastArmByUdp
+                if (!lanOk && !armedByHandshake && (powerOffAt != 0L || silentFor >= c.staleMaxS * 1000L)) {
+                    return   // blind phone with a verdict due: structural edge already captured, or stale would fire
+                }                             // now — hold instead of cutting on a LAN the phone can't reach. Pre-verdict
+                                            // silence-only episodes fall through so captureEdge keeps timing honestly.
                 captureEdge(c, hbQuiet)   // tick-sampled edge: HB silence >=15s arms the countdown immediately
                 val edgeAgo = if (powerOffAt == 0L) -1L else now - powerOffAt
                 val hostDead = silentFor >= c.bootConfirmS * 1000L   // agent 静默过 boot 确认阈值 = 主机确死
