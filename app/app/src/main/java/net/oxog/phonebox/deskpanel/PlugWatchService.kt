@@ -48,7 +48,8 @@ class PlugWatchService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         watcher.seed(stickyPlugged())
-        try { registerReceiver(debugReceiver, android.content.IntentFilter(ACTION_DEBUG_ARM), Context.RECEIVER_NOT_EXPORTED) } catch (_: Exception) {}
+        // two actions need an explicit registration loop — the (String,int) ctor only takes ONE action (minSdk 28 has no arrayOf-overload)
+        try { for (a in arrayOf(ACTION_DEBUG_ARM, ACTION_DEBUG_CHECK)) registerReceiver(debugReceiver, android.content.IntentFilter(a), Context.RECEIVER_NOT_EXPORTED) } catch (_: Exception) {}
         try { registerReceiver(usbLinkReceiver, android.content.IntentFilter("android.hardware.usb.action.USB_STATE"), Context.RECEIVER_NOT_EXPORTED) } catch (_: Exception) {}
         watcher.start()
         return START_STICKY
@@ -95,25 +96,31 @@ class PlugWatchService : Service() {
 
     /** POST with the payload as body (AgentLink.send posts a zero-length fixed stream, which PushStore would
      *  floor to "{}" — we need the value itself). The USB reverse tunnel answers even while the server sleeps,
-     *  because adb reverse is kept by the adb daemon on THIS phone (usbMode=adb survives ErP loss). */
+     *  because adb reverse is kept by the adb daemon on THIS phone (usbMode=adb survives ErP loss). CAVEAT
+     *  (real-off #2 post-mortem): the tunnel's AGENT endpoint lives on the watched server — once that host dies,
+     *  loopback connects ECONNREFUSE and Android backs off retries for up to ~35 s per push. Hence NO timeouts
+     *  here: a dead server makes connect() hang until OS connect timeout (~2 min), which is exactly what held
+     *  writeOff hostage behind this queue (FIRE +187.9 s, OFF_OK +313 s). Pushes are cosmetic — the watcher's
+     *  local plug_watch.log is the surviving record — so they must fail fast and never gate anything else. */
     private fun pushThroughAgent(j: JSONObject) {
         // the watcher's journal push rides its own key; everything else is the state card
         val keyName = if (j.optString("title") == "watch log") "plug_watch_log" else "plug_delay_state"
         try {
             val ttl = j.optInt("ttl", 300)
-            val c = java.net.URL("http://127.0.0.1:8765/api/push/$keyName?ttl=$ttl")
-                .openConnection() as java.net.HttpURLConnection
-            // agent's loopback /api/* accepts POST without a token (phone-side USB tunnel is the trust boundary)
-            c.connectTimeout = 800; c.readTimeout = 3000
-            c.requestMethod = "POST"
-            c.setRequestProperty("Content-Type", "application/json")
-            c.doOutput = true
-            val b = j.toString().toByteArray(Charsets.UTF_8)
-            c.setFixedLengthStreamingMode(b.size)
-            c.outputStream.use { it.write(b) }
-            val code = c.responseCode
-            if (code >= 400) android.util.Log.w("PlugWatchPush", "agent push rc=$code")
-            (if (code >= 400) c.errorStream else c.inputStream)?.close()
+            val u = java.net.URL("http://127.0.0.1:8765/api/push/$keyName?ttl=$ttl")
+            (u.openConnection() as java.net.HttpURLConnection).apply {
+                // agent's loopback /api/* accepts POST without a token (phone-side USB tunnel is the trust boundary)
+                connectTimeout = 300; readTimeout = 1000   // dead-host fast fail, see method comment
+                requestMethod = "POST"
+                setRequestProperty("Content-Type", "application/json")
+                doOutput = true
+                val b = j.toString().toByteArray(Charsets.UTF_8)
+                setFixedLengthStreamingMode(b.size)
+                outputStream.use { it.write(b) }
+                val code = responseCode
+                if (code >= 400) android.util.Log.w("PlugWatchPush", "agent push rc=$code")
+                (if (code >= 400) errorStream else inputStream)?.close()
+            }
         } catch (e: Exception) {
             android.util.Log.w("PlugWatchPush", "push failed: ${e.message}")
         }
@@ -182,15 +189,22 @@ class PlugWatchService : Service() {
             s.watcher.onPlugEdge(plugged)
         }
 
-        /** Debug aid: adb shell am broadcast -a net.oxog.phonebox.PLUGW_DRY_ARM — arm without touching services. */
+        /** Debug aids: adb shell am broadcast -a net.oxog.phonebox.PLUGW_DRY_ARM — arm without touching services;
+         *  -a net.oxog.phonebox.PLUGW_CHECK — timed read-only plug call (writeOff-lane timing dry-run). */
         const val ACTION_DEBUG_ARM = "net.oxog.phonebox.PLUGW_DRY_ARM"
+        const val ACTION_DEBUG_CHECK = "net.oxog.phonebox.PLUGW_CHECK"
     }
 
     /** Local test hook (no production path ever calls this): UDP-less arm for the dry-run matrix. */
     private val debugReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(c: android.content.Context?, i: android.content.Intent?) {
-            android.util.Log.i("PlugWatcher", "DEBUG arm via broadcast")
-            watcher.debugArm()
+            if (i?.action == ACTION_DEBUG_CHECK) {
+                android.util.Log.i("PlugWatcher", "DEBUG check via broadcast")
+                watcher.debugCheck()
+            } else {
+                android.util.Log.i("PlugWatcher", "DEBUG arm via broadcast")
+                watcher.debugArm()
+            }
         }
     }
 

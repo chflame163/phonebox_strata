@@ -52,7 +52,19 @@ class PlugWatcher(
     // while idle and their parked runnables are never picked up again — the tickLoop() submit silently vanished
     // twice (T3 dry-run, 2026-11-24). A plain Thread survives doze exactly like MainActivity's 60 s probe loop.
     @Volatile private var tickThread: Thread? = null
-    private val io = Executors.newSingleThreadExecutor()
+    // Lane discipline (real-off #2 post-mortem, 2026-11-25): the SUPPLY-CUT write gets its OWN thread — it must
+    // never share a queue with the cosmetic panel pushes. Observed on the wire: FIRE at +187.9s but OFF_OK only
+    // at +313s. Root cause = pushEvent's HTTP POST to the reverse tunnel whose agent endpoint lives ON THE DYING
+    // SERVER; ECONNREFUSED on loopback makes Android back off reconnects (1s/2s/4s…) and those retries held the
+    // single-threaded io executor hostage, writeOff queued behind it. The tunnel is a server-side unit, so after
+    // poweroff nobody re-arms it until boot — pushes are pure best-effort by design (log file is the real record).
+    private val plugIo = Executors.newSingleThreadExecutor()      // miio writes/reads: the only lane that may cut power
+    @Volatile private var pushThread: Thread? = null              // one-shot plain thread per event (pool workers get reaped on this ROM — tick-loop lesson)
+    private fun pushAsync(r: Runnable) {
+        val t = Thread(r, "plug-push"); t.isDaemon = true
+        pushThread = t
+        try { t.start() } catch (_: OutOfMemoryError) { pushThread = null }  // thread storm is worse than a lost panel card
+    }
     private val main = Handler(Looper.getMainLooper())
     private var socket: DatagramSocket? = null
     @Volatile private var running = false
@@ -355,14 +367,17 @@ class PlugWatcher(
         state = State.FIRED
         firedAt = SystemClockElapsed.get()
         powerOffAt = 0L
+        // Order discipline (see plugIo's comment above): the verdict line + write FIRST, panel card SECOND —
+        // pushState must never sit in front of the supply cut, even as a queued task. log()'s own pushes ride
+        // throwaway threads now, so nothing cosmetic can delay OFF any more.
         log("FIRE：$why | dry=${c.dry}")
-        pushState(c, reason = "fired($why)")
         if (c.dry) {
             // dry-run 只读验据照常：证明协议/凭据到得了插座，唯独不写。
-            io.execute { verifyReadOnly(c) }
+            plugIo.execute { verifyReadOnly(c) }
         } else {
-            io.execute { writeOff(c) }
+            plugIo.execute { writeOff(c) }
         }
+        pushState(c, reason = "fired($why)")
     }
 
     private fun rearm(c: Cfg, why: String) {
@@ -394,6 +409,30 @@ class PlugWatcher(
     /** adb-smoke entry point: read-only credential probe with the current config snapshot. */
     fun checkNow(): String = checkOnce(readCfg())
 
+    /** Timed diagnostic (real-off #2 hunt, 2026-11-25): runs the SAME get_properties exchange writeOff rides and
+     *  logs CHECK_OK + wall ms. Entry = debug broadcast (same pattern as PLUGW_DRY_ARM); expect <1000 ms online —
+     *  anything slower is the plug/transport, not our queuing. */
+    fun debugCheck() {
+        pushAsync {
+            val r = try {
+                val c = readCfg()
+                val d = MiioClient(c.plugIp, c.plugToken)
+                val (obj, ms) = d.callTimed("get_properties", propsGet())
+                "CHECK_OK ${ms}ms ${obj.optJSONArray("result") ?: obj}"
+            } catch (e: Exception) { "CHECK_FAIL ${e.message}" }
+            log("DEBUG $r")
+        }
+    }
+
+    fun checkNowSync(): String = try {
+        val c = readCfg()
+        val d = MiioClient(c.plugIp, c.plugToken)
+        val (r, ms) = d.callTimed("get_properties", propsGet())
+        "CHECK_OK ${ms}ms ${r.optJSONArray("result") ?: r}"
+    } catch (e: Exception) {
+        "CHECK_FAIL ${e.message}"
+    }
+
     private fun verifyReadOnly(c: Cfg) {
         if (c.plugIp.isBlank() || c.plugToken.length != 32) {
             log("dry fire：插座凭据未配置，跳过只读验据")
@@ -417,12 +456,12 @@ class PlugWatcher(
         } catch (e: Exception) {
             log("fire 写插座失败：${e.message}（30s 后随 tick 重试）")
             // keep FIRED but retry the write — mirrors NAS fire()'s rc!=0 retry path
-            main.postDelayed({ if (running && state == State.FIRED) io.execute { writeOff(c) } }, 30_000L)
+            main.postDelayed({ if (running && state == State.FIRED) plugIo.execute { writeOff(c) } }, 30_000L)
         }
     }
 
     /** Manual trigger for adb/broadcast entry: --on semantics. Kept off the hot path; watcher never powers back up by itself. */
-    fun powerOn() = io.execute {
+    fun powerOn() = plugIo.execute {
         val c = readCfg()
         if (c.dry) { log("powerOn 在 dry 模式下被忽略（真上电请走 NAS nas_off.py --on 或米家 App）"); return@execute }
         try {
@@ -485,7 +524,7 @@ class PlugWatcher(
                 histFile.writeBytes(tail)
             }
         } catch (_: Exception) {}   // logging must never kill a decision
-        pushLogTail()
+        pushAsync { pushLogTail() }  // off any shared lane: a dead tunnel may burn threads, it may never burn the OFF path
     }
 
     private fun sleepMs(ms: Long) = try { Thread.sleep(ms) } catch (_: InterruptedException) {}

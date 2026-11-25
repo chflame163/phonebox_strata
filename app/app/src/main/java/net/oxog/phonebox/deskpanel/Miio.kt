@@ -229,6 +229,14 @@ class MiioClient(private val ip: String, tokenHex: String, private val timeoutMs
         throw MiioException("$method failed: ${lastError?.message}")
     }
 
+    /** Timed variant of call() for dry-run diagnostics ("the OFF command should be instant" — if the wall-clock
+     *  ms here stays ~<1000 online, any real-off stretch lives in queuing/tunnel, not the plug protocol). */
+    fun callTimed(method: String, params: JSONArray): Pair<JSONObject, Long> {
+        val t0 = System.nanoTime()
+        val r = call(method, params)
+        return r to ((System.nanoTime() - t0) / 1_000_000)
+    }
+
     private fun request(id: Int, method: String, paramsJson: String): JSONObject {
         if (!discovered) handshake()
         // python-miio's EncryptionAdapter hands Utils.encrypt json.dumps(payload_string)+NUL — the payload is

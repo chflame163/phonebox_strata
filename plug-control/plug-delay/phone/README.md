@@ -48,6 +48,11 @@ java -cp "hextest.jar:json.jar" MiioHexTestKt golden.json      # → HEXDIFF_PAS
 - dry=true 全程不写插座；fire 后自动跑只读 `CHECK_*` 验据。判决历史双通道：
   本机 `files/plug_watch.log`（拔电也在）+ push key `plug_watch_log`/`plug_delay_state`（面板 System 页两卡）。
 - 手动臂测：`adb shell am broadcast -a net.oxog.phonebox.PLUGW_DRY_ARM`；
-  UDP 握手：`python3 /usr/local/bin/plugdelay/plug-send.py <手机IP> 12345 "SHUTDOWN t"`。
+  **计时只读体检**（writeOff 同路验延时）：`adb shell am broadcast -a net.oxog.phonebox.PLUGW_CHECK` → logcat 出
+  `DEBUG CHECK_OK <ms>ms …`（在线期望 <1000ms，实测 51ms；真关机场景的 127s 已查明=推送队列劫持，见下）。
+- **真关机 #2 验尸结论（2026-11-25）**：reverse 隧道(:8765)的对端 agent 活在服务器上——服务器一死 loopback
+  connect 即 ECONNREFUSED/挂起，旧版无超时把 writeOff 排在 push 队后（FIRE+187.9s、OFF_OK+313s）。修复三件套：
+  miio 走独立 `plugIo` 线程、fire() 先判决后推卡、push 超时 300/1000ms fail-fast。插座本身不随主机掉电、
+  set 一次即成——别再拿"插座重新入网"当解释。APK 0.9.5+fork(2026-11-25 build) 起生效。
 - T5（电量下限）语义：**插电=永不拒臂**（FULL_TRICK_LEVEL 哨兵短路），critLevel 只对真电池生效；
   演示拒臂需拔掉充电器再测。
