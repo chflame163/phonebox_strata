@@ -10,6 +10,13 @@ plug-delay/ ─ 服务器心跳/握手 → watcher 判决 → 局域网 miio 断
 watcher 现在有两个实现：**NAS 版**（`plug-delay/nas/`，python 常驻）与**手机版**
 （`plug-delay/phone/` + app 里的 `PlugWatcher`，2026-11-24 起 dry-run 在岗）。判决语义一致。
 
+## 取证双通道（真关机对账必备，2026-11-25 #7 后加）
+
+watcher 每个判决点都会打 `DIAG hb静默=Xs agent静默=Ys usb链=Z` 行（logcat + plug_watch.log + push key
+plug_diagtrail 滚动尾 12 条），事后对账不用再猜哪个时钟拖了闸——#4/#5/#6/#7 四轮各猜一次各错一半的教训。
+服务器侧对照：journalctl -b -1 grep plug-heartbeat/notify + `last` 关机区间 = T0 与 HB 真死时刻；手机侧
+healthd st=3/c<0 = ErP 塌电物理时刻（deep-standby 断 USB 也产生同款读数，勿当插座断电证据——#4 误读过一次）。
+
 ## 三条红线（先记住再动手）
 
 1. **任一时刻只有一个 watcher 有权写插座——NAS 与手机互斥、二选一**。换班 = 一边 enable 前

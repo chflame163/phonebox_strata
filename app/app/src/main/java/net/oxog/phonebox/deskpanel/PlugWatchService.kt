@@ -109,8 +109,12 @@ class PlugWatchService : Service() {
      *  writeOff hostage behind this queue (FIRE +187.9 s, OFF_OK +313 s). Pushes are cosmetic — the watcher's
      *  local plug_watch.log is the surviving record — so they must fail fast and never gate anything else. */
     private fun pushThroughAgent(j: JSONObject) {
-        // the watcher's journal push rides its own key; everything else is the state card
-        val keyName = if (j.optString("title") == "watch log") "plug_watch_log" else "plug_delay_state"
+        // the watcher's journal push rides its own key; the clock-dump ring rides a third; everything else is the state card
+        val keyName = when (j.optString("title")) {
+            "watch log" -> "plug_watch_log"
+            "diag trail" -> "plug_diagtrail"
+            else -> "plug_delay_state"
+        }
         try {
             val ttl = j.optInt("ttl", 300)
             val u = java.net.URL("http://127.0.0.1:8765/api/push/$keyName?ttl=$ttl")

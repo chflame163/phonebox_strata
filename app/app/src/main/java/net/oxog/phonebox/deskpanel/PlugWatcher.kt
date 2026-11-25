@@ -78,6 +78,7 @@ class PlugWatcher(
     @Volatile private var lastArmByUdp = false    // true when the most recent arm came from a UDP SHUTDOWN (handshake, not boot silence)
     @Volatile private var edgeWasHb = false       // provenance of powerOffAt: HB-silence edges keep the hostDead gate
     @Volatile private var fireRunnable: Runnable? = null   // event-driven FIRE timer (armFireTimer); tick remains backstop
+    @Volatile private var lastDiag = ""                    // decide() per-state clock dump (dedupe by content)
 
     companion object {
         /** BatteryManager.BATTERY_STATUS_FULL sentinel passed through batteryLevel() by MainActivity when the HAL
@@ -361,6 +362,13 @@ class PlugWatcher(
         // heartbeat clock: UDP HB frames land in hbAt via handleUdp; >=15 s of silence == the host stopped talking.
         val hbQuiet = hbSilenceMs()
         val usbUp = usbLinkUp()
+        // #7 lesson, permanent forensics lane: every decide() tick while not IDLE dumps the three clocks that drive
+        // every gate (HB/agent silence + USB link) — one line per state, deduped by content changes; post-mortem
+        // then needs zero guessing about which clock dragged which gate (#4/#5/#6 each mis-diagnosed once).
+        if (state != State.IDLE) {
+            val line = "DIAG hb静默=${if (hbQuiet < 0) "never" else "${hbQuiet / 1000}s"} agent静默=${silentFor / 1000}s usb链=$usbUp 态=$state"
+            if (line != lastDiag) { lastDiag = line; log(line); pushDiagTrail() }
+        }
         // The ErP edge itself is captured by onPlugEdge (Activity receiver, fast path) and decide()'s next tick;
         // here we only enforce §4.2's timing gate: an armed-with-edge episode may not fire before the phone has
         // also gone fully silent for bootClearS (the cable dies seconds after SIGTERM, while agent frames are
@@ -386,8 +394,15 @@ class PlugWatcher(
                 // cancel unconditionally; agent-data-driven cancels need the stream's own freshness signal, i.e.
                 // silence young AND still receiving within AGENT_SILENCE (12 s) of the last DATA line — a reboot
                 // that really comes back answers fresh SSE/cfg GETs within its first minute anyway (bootClearS=45).
-                val agentFresh = silentFor < c.bootClearS * 1000L &&
-                    (agentDataAt() == 0L || now - agentDataAt() <= 12_000L)   // == "bytes are actually flowing again"
+                val aNow = agentDataAt()
+                // #7 drill forensics (11:12 run, DIAG caught it red-handed): a FRESH process (reinstall/start
+                // mid-episode) has agentDataAt==0 — decide() treats 0 as "boot-phase fresh" → silentFor=0 → this
+                // cancel hit on its very first tick and killed a legitimate episode. But an episode already
+                // bootClear old that still sees ZERO bytes was never revived by anything — silence==0 there is a
+                // clock artifact, not life (agentDataAt is companion-static per the T3 lesson: ==0 means no data
+                // since process start, full stop). Freshness therefore requires real stamps OR an old-enough episode.
+                val agentFresh = if (aNow == 0L) armedAgo >= c.bootClearS * 1000L && silentFor < c.bootClearS * 1000L
+                    else silentFor < c.bootClearS * 1000L && now - aNow <= 12_000L
                 if (armedAgo >= c.bootClearS * 1000L && agentFresh) {
                     cancel("agent 数据恢复（静默 ${silentFor / 1000}s < ${c.bootClearS}s）")
                     return
@@ -632,6 +647,21 @@ class PlugWatcher(
 
     private fun logLine(msg: String): String =
         java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()) + " " + msg
+
+    /** Rolling DIAG-trail card: last 12 clock dumps survive in a push key so the panel's System page shows live
+     *  gate state during an episode (and the tail survives via USB reverse after the server is back). */
+    private val diagRing = java.util.concurrent.ConcurrentLinkedDeque<String>()
+    private fun pushDiagTrail() {
+        while (diagRing.size >= 12) diagRing.poll()
+        diagRing.add(logLine(lastDiag))
+        try {
+            pushEvent(JSONObject()
+                .put("value", diagRing.joinToString("\n"))
+                .put("title", "diag trail")
+                .put("level", "info")
+                .put("ttl", 3600))
+        } catch (_: Exception) {}
+    }
 
     /** Push the whole journal tail (the watcher's own lines) under a second push key — the panel's Watch Log card. */
     private fun pushLogTail() {

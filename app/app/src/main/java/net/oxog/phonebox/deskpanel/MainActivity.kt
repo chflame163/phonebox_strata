@@ -351,7 +351,19 @@ class MainActivity : Activity(), SensorEventListener {
             // dead TCP can trail the last real byte by minutes (real-off #6 audit: FIRE ate edge+171s because this
             // stamp rode delivered frames while stream.lastDataAt said the bytes stopped at T0+11.5s). Gate on the
             // stream's own last-DATA-line clock; fresh stamps only within one AGENT_SILENCE window of true activity.
-            if (event != "close" && android.os.SystemClock.elapsedRealtime() - stream.lastDataAt <= AGENT_SILENCE_MS) stampAgentData()
+            // #7 final truth: bytes flowing again (lastDataAt fresh) OR the socket merely answering our 8 s SO_TIMEOUT
+            // polls (socketAliveAt fresh — a live path that may be between events) are both host-alive proof; a dead
+            // server makes reads escalate to EOF within ~20-30 s and neither clock moves, so zombie lag can't pin this.
+            // #7 drill 3 final call: the SSE deliver path is now PURELY lastDataAt-gated. socketAliveAt pinning was
+            // first widened here, then the per-connection guard thread turned it into an every-second metronome for
+            // as long as a (possibly zombie) connection object lives — agent静默 0↔15s oscillation in all three drills
+            // was that metronome, not bytes. DATA freshness alone is the honest "host answering" signal; keep the
+            // guard's socketAliveAt for forensics/DIAG only.
+            // #7 final: lastDataAt OR a live guard's socketAliveAt — the latter rescues the rare-but-real case of a
+            // connection that answers our 8 s polls but produced no DATA line in >12 s (agent busy between pushes);
+            // the metronome itself is honest now (newest-token-wins + zero-on-exit, see AgentStream's guard comment),
+            // so it can never ghost-pin a zombie.
+            if (event != "close" && android.os.SystemClock.elapsedRealtime() - maxOf(stream.lastDataAt, stream.socketAliveAt) <= AGENT_SILENCE_MS) stampAgentData()
             val js = "window.onAgentStream && window.onAgentStream(${JSONObject.quote(event)}, ${JSONObject.quote(data)})"
             runOnUiThread { web.evaluateJavascript(js, null) }
         }
