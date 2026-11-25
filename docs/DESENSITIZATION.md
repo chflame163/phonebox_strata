@@ -12,7 +12,8 @@
 | `<server-ip>` | Strata 服务器（跑 agent 的 Ubuntu）局域网地址 | 服务器 `~/.config/pb_hosts.env`：`PB_SERVER_IP` |
 | `<nas-ip>` | 群晖 NAS（plug-delay 判决端）局域网地址 | 同上 `PB_NAS_IP`；另见服务器 `/usr/local/bin/plugdelay/plug-delay.env` 的 `NAS_IP` |
 | `<plug-ip>` | 小米智能插座（xiaomi.plug.04）局域网地址 | 服务器 `~/.config/pb_plug.env`：`PB_PLUG_IP`；NAS `plug-secret.env` 同名一份（**两处各存**） |
-| `<plug-token>` | 插座 32 位 miio token | 服务器 `~/.config/pb_plug.env`：`PB_PLUG_TOKEN`；NAS `plug-secret.env` 同名一份 |
+| `<plug-token>` | 插座 32 位 miio token | 服务器 `~/.config/pb_plug.env`：`PB_PLUG_TOKEN`；NAS `plug-secret.env` 同名一份；**agent config `display.plugToken` 同源**（快照里用此占位，deanonymize 一并还原） |
+| `<plug-mac>` | 插座 Wi-Fi MAC（wol/on 判定用） | agent config `display.plugMac`；映射变量 `PB_PLUG_MAC`（pb_plug.env，**可选**——deanonymize 只在它已定义时才替换） |
 | `<phone-ip>` | 面板手机的 Wi-Fi 地址（无线 adb 排障用） | `pb_hosts.env`：`PB_PHONE_IP` |
 | `<gateway>` | 家里网关 | `pb_hosts.env`：`PB_GATEWAY_IP` |
 | `<serial>` | 手机 adb 序列号 | `pb_hosts.env`：`PB_PHONE_SERIAL`（旧脚本里沿用的变量名是 `PB_SERIAL`，跑还原后的脚本时 export 一个即可） |

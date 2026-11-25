@@ -39,19 +39,23 @@ cp collector/pb-strata-push.{service,timer} ~/.config/systemd/user/ && systemctl
 
 ## 3. 页面布局（home 12 卡 + 2 个副页）
 
-快照 `layout/agent-config-snapshot-20261118.json`（含全部控件坐标与参数；lan token/坐标为
-占位符）。home（12×6 网格）实拍位姿：
+快照 `layout/agent-config-snapshot-20261125.json`（含全部控件坐标与参数，**Model state 已含
+v3 html**；lan token/webhookToken、plug ip/token/mac、天气坐标为占位符。换版纪律：改完 8765
+就从现场 config 重新脱敏生成、同名日期新文件+删旧快照，敏感值复扫=pb_plug/pb_hosts 派生值与
+LAN IP 形态双零才算净）。home（12×6 网格）实拍位姿：
 
 | 控件                       | 类型     | 位/尺              |     | 控件                                                                                          | 类型 | 位/尺      |
 | -------------------------- | -------- | ------------------ | --- | --------------------------------------------------------------------------------------------- | ---- | ---------- |
-| Top CPU 进程               | topprocs | x0 y0 4×4          |     | Model state                                                                                   | HTML | x8 y0 4×2  |
+| Top CPU 进程               | topprocs | x0 y0 4×4          |     | Model state（v3：无标题/互斥单徽章+右侧常驻队列灯）                                            | HTML | x8 y0 4×2  |
 | 墙电波形                   | HTML     | x4 y0 4×2          |     | GPU POWER gauge                                                                               | push | x4 y2 2×2  |
 | VRAM gauge                 | push     | x6 y2 2×2          |     | CTX gauge                                                                                     | push | x8 y2 2×2  |
 | Speed big                  | push     | x10 y2 2×1         |     | Prefill big                                                                                   | push | x10 y3 2×1 |
 | CPU/GPU/RAM/NET 四 stat 卡 | stat     | x0/3/6/9 y4 各 3×2 |     | 副页：System Monitor（3 chart+1 meters）、Calendar and Weather（calendar/clock/forecast/air） |      |            |
 
 两种从零重建法：**A. 快照回植**——把快照里 `<REDACTED lan.token>`、`<REDACTED lan.webhookToken>`、
-`"<lat>"`/`"<lon>"` 填成真值（token 直接抄新装 agent 自动生成的那两条），写到
+`"<lat>"`/`"<lon>"`、`<plug-ip>`/`<plug-token>`/`<plug-mac>` 填成真值（lan 两条 token 直接抄新装
+agent 自动生成的那两条；plug 三件按 `docs/DESENSITIZATION.md` 对照表从 pb_plug.env 还原，
+deanonymize.sh 已覆盖这些占位），写到
 `~/.config/PhoneBox/config.json`，`systemctl --user restart phonebox` 并 force-stop+重启面板进程
 让新 config 冷读。**B. 手工搭**——浏览器开 `http://127.0.0.1:8765` 编辑器页，按上表逐个 Add，
 两个 HTML 控件选 Custom HTML 并把 `widgets/*.html` **全文粘贴**。

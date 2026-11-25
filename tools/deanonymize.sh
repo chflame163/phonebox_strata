@@ -4,7 +4,7 @@
 #
 # 用法：
 #   tools/deanonymize.sh phone-behavior/standby/pb-wake.sh > /tmp/run.sh && bash /tmp/run.sh
-#   tools/deanonymize.sh panel/layout/agent-config-snapshot-20261118.json > /tmp/config.json
+#   tools/deanonymize.sh panel/layout/agent-config-snapshot-20261125.json > /tmp/config.json
 #   tools/deanonymize.sh --check     # 只看映射文件与变量在不在（不输出值）
 #
 # 规则顺序有讲究：带引号的占位（JSON 数值位写法）必须先换，否则会被裸规则吞成 "<lat>"。
@@ -29,6 +29,7 @@ done
 [ -n "${PB_PLUG_TOKEN:-}" ] || { echo "missing PB_PLUG_TOKEN（$PLUGF）"; exit 3; }
 sed -e "s|\"<lat>\"|$PB_LAT|g" -e "s|\"<lon>\"|$PB_LON|g" \
     -e "s|<plug-ip>|$PB_PLUG_IP|g" -e "s|<plug-token>|$PB_PLUG_TOKEN|g" \
+    ${PB_PLUG_MAC:+-e "s|<plug-mac>|$PB_PLUG_MAC|g"} \
     -e "s|<phone-ip>|$PB_PHONE_IP|g" -e "s|<server-ip>|$PB_SERVER_IP|g" \
     -e "s|<nas-ip>|$PB_NAS_IP|g" -e "s|<gateway>|$PB_GATEWAY_IP|g" \
     -e "s|<serial>|$PB_PHONE_SERIAL|g" -e "s|<host>|$PB_HOSTNAME|g" \
