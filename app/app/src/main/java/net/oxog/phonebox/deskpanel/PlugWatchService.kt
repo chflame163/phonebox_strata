@@ -47,6 +47,12 @@ class PlugWatchService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // #9 exact-alarm hop: the manifest receiver relights us with this action; hand it to the live watcher and
+        // return START_STICKY unchanged (this isn't a fresh launch — seed() would re-stamp plug state).
+        if (intent?.action == ACTION_FIRE_ALARM) {
+            watcher.onFireAlarm()
+            return START_NOT_STICKY   // transient hop; if it dies here the next tick/stale lane still judges honestly
+        }
         watcher.seed(stickyPlugged())
         // two actions need an explicit registration loop — the (String,int) ctor only takes ONE action (minSdk 28 has no arrayOf-overload)
         try { for (a in arrayOf(ACTION_DEBUG_ARM, ACTION_DEBUG_CHECK)) registerReceiver(debugReceiver, android.content.IntentFilter(a), Context.RECEIVER_NOT_EXPORTED) } catch (_: Exception) {}
@@ -203,6 +209,8 @@ class PlugWatchService : Service() {
          *  -a net.oxog.phonebox.PLUGW_CHECK — timed read-only plug call (writeOff-lane timing dry-run). */
         const val ACTION_DEBUG_ARM = "net.oxog.phonebox.PLUGW_DRY_ARM"
         const val ACTION_DEBUG_CHECK = "net.oxog.phonebox.PLUGW_CHECK"
+        /** #9: internal startService action from PlugFireAlarmReceiver (explicit component — no exported needed). */
+        const val ACTION_FIRE_ALARM = "net.oxog.phonebox.PLUGW_FIRE_HOP"
     }
 
     /** Local test hook (no production path ever calls this): UDP-less arm for the dry-run matrix. */

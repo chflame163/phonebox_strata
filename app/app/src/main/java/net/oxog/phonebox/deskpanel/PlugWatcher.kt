@@ -77,10 +77,17 @@ class PlugWatcher(
     @Volatile private var lastPluggedFlag = true  // live plug state as far as the watcher knows (sticky + edges)
     @Volatile private var lastArmByUdp = false    // true when the most recent arm came from a UDP SHUTDOWN (handshake, not boot silence)
     @Volatile private var edgeWasHb = false       // provenance of powerOffAt: HB-silence edges keep the hostDead gate
-    @Volatile private var fireRunnable: Runnable? = null   // event-driven FIRE timer (armFireTimer); tick remains backstop
+    @Volatile private var fireRunnable: Runnable? = null   // event-driven FIRE verdict body (shared by alarm & Handler fallback)
+    @Volatile private var fireAlarm: android.app.PendingIntent? = null   // monotonic exact alarm backing armFireTimer (#9)
     @Volatile private var lastDiag = ""                    // decide() per-state clock dump (dedupe by content)
 
     companion object {
+        // #9 exact-alarm lane: PlugFireAlarmReceiver (manifest, .DeskPanelExported? no — internal only) posts here;
+        // the running watcher instance is reached via the static set by start() (service owns the lifecycle).
+        const val FIRE_ALARM_ACTION = "net.oxog.phonebox.PLUGW_FIRE_ALARM"
+        const val FIRE_ALARM_REQ_CODE = 0x9E7
+        @Volatile var live: PlugWatcher? = null
+
         /** BatteryManager.BATTERY_STATUS_FULL sentinel passed through batteryLevel() by MainActivity when the HAL
          *  reports FULL while still charging — mirrors MainActivity's "charged phone keeps EXTRA_PLUGGED dropped" guard. */
         const val FULL_TRICK_LEVEL = 101
@@ -113,7 +120,10 @@ class PlugWatcher(
             delayS = delay,
             bootConfirmS = (c["display.plugBootConfirmSec"] as? Number)?.toInt()?.coerceIn(10, 600) ?: 60,
             bootClearS = (c["display.plugBootClearSec"] as? Number)?.toInt()?.coerceIn(5, 300) ?: 45,
-            staleMaxS = maxOf(300, delay * 2),
+            // #9: stale backstop follows the tuned delay (was max(300, 2×delay) — with delay=90 it read a flat 300 s,
+            // which is EXACTLY where real-offs #7/#8's verdicts kept landing because the exact alarm never rang;
+            // backstop now sits at delay+120 floor 180 s so even an alarm failure lands near the tuned target).
+            staleMaxS = maxOf(180, delay + 120),
             critLevel = (c["display.plugCritLevel"] as? Number)?.toInt()?.coerceIn(1, 50) ?: 8,
             listenPort = (c["display.plugUdpPort"] as? Number)?.toInt()?.coerceIn(1024, 65535) ?: 12345,
             plugIp = c["display.plugIp"] as? String ?: "",
@@ -188,9 +198,13 @@ class PlugWatcher(
         val p = powerOffAt
         if (state != State.ARMED || p == 0L) return
         fireRunnable?.let { main.removeCallbacks(it) }
-        // LAN gate mirrored from decide()'s hold (see its comment): a blind phone must not event-fire either.
-        // HB freshness is the proof-of-LAN probe; handshake arms are exempt (planned shutdown proven by intent).
-        if (hbSilenceMs().let { it < 0L || it >= 15_000L } && !lastArmByUdp) return
+        // #9 redesign, gate source of truth: provenance, not flags. captureEdge classifies EVERY edge — handshake-
+        // preceded HB edges are structural (edgeWasHb=false, planned death), pure-silence edges keep the strict
+        // bootConfirm lane. The old lastArmByUdp exemption was fragile (cleared by cancel/rearm/fire/episode churn)
+        // and its half-written entry gate is exactly what silently disarmed the timer in real-offs #7/#8 (DIAG:
+        // hb=4s at edge, gate read blind => return, no alarm ever scheduled => stale-300s fired it). Provenance is
+        // set once per episode and needs no survival — the verdict reads it at fire time anyway. No entry gate:
+        // ALWAYS schedule; the alarm body re-evaluates LAN/hold lanes when it rings.
         val a = agentDataAt()
         val silentFor = if (a == 0L) SystemClockElapsed.get() else SystemClockElapsed.get() - a   // no frame yet: treat as fully silent (boot phase never rides this lane anyway)
         // handshake arms skip the confirm gate for the same reason captureEdge reclasses their provenance —
@@ -220,22 +234,57 @@ class PlugWatcher(
             // after ErP drops VBUS; no new beats, ever). The window's true purpose is excluding a blind episode that
             // armed LONG ago on an alive-but-WiFi-dead host, i.e. quiet measured since ARM: delay+180 s covers the
             // whole legitimate countdown (arm→HB dies at bootClear-ish→verdict at arm+delay+) with margin.
-            val lanOk2 = hbSilenceMs().let { it in 0..14_999L } ||
-                // #8 drill-7 final semantics (HB rides USB too — adb reverse delivers over 10.31.x.x, so HB silence
-                // is NOT a Wi-Fi-blind detector; the pre-fire miio probe in writeOff is). Timer side:
-                //   - handshake arm + beats truly gone (quiet >= 15 s / never-heard) => planned death => fire;
-                //   - blind mid-countdown (beats still fresh at verdict time but Wi-Fi died en route) => the probe
-                //     would fail and retry, but the TIMER must not keep firing on its own — hand to tick/stale lanes;
-                //   - drills' frozen-HB-with-alive-agent episodes age out via the armed-window cap.
-                (lastArmByUdp && (hbSilenceMs() >= 15_000L || hbSilenceMs() < 0L) &&
-                    now2 - armedAt < (c2.delayS + 180) * 1000L)
+            // #9: delivery truth is the pre-fire miio probe (writeOff), not HB/HB-age heuristics — HB rides Wi-Fi LAN
+            // (ip route: eno2 -> .208, no usb0) so its silence is host-death AND blind-phone indistinguishable. The
+            // timer's ONLY remaining job after the delay deadline + provenance proof is to hand the verdict to fire();
+            // if the phone can't reach the plug at that instant, writeOff's probe fails fast and retries every 30 s —
+            // which IS the "双哑=不发" policy enforced at delivery time, with retries dying out on their own.
+            val lanOk2 = true   // (probe owns delivery; keep name for the audit trail in code)
             if (now2 - powerOffAt >= c2.delayS * 1000L && proven2 && lanOk2) fire(c2, "掉电沿后已满 ${c2.delayS}s（event）")
             // else: fall through silently — decide()'s lanes own this verdict from here on (hold while blind,
             // stale backstop for no-edge anomalies; the timer's recheck loop is deliberately NOT extended past
             // its delay+60 bound, #8's +305 s stall was that loop handing off into gates that refuse to act).
         }
         fireRunnable = r
-        main.postDelayed(r, maxOf(500L, minOf(delayLeft, if (gate > 0L) gate else Long.MAX_VALUE)))
+        // #9 monotonic-exact lane: Handler.postDelayed drifts minutes when the main thread is wedged in WebView/
+        // agent teardown churn (real-offs #7/#8: the 90 s alarm rang ~4-5 min late or not at all, every verdict fell
+        // to stale-300s). AlarmManager ELAPSED_REALTIME_WAKEUP + setExact* is immune (fires even in doze), and we
+        // still hop back to main.post so the verdict body keeps its single-threaded discipline.
+        val whenMs = maxOf(500L, minOf(delayLeft, if (gate > 0L) gate else Long.MAX_VALUE))
+        try {
+            val am = context.getSystemService(android.content.Context.ALARM_SERVICE) as android.app.AlarmManager
+            val pi = android.app.PendingIntent.getBroadcast(
+                context, FIRE_ALARM_REQ_CODE,
+                android.content.Intent(FIRE_ALARM_ACTION).setPackage(context.packageName),
+                android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                    or (if (android.os.Build.VERSION.SDK_INT >= 31) android.app.PendingIntent.FLAG_MUTABLE else 0),
+            )
+            fireAlarm = pi
+            if (android.os.Build.VERSION.SDK_INT >= 31 && !am.canScheduleExactAlarms())
+                am.set(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    android.os.SystemClock.elapsedRealtime() + whenMs, pi)   // legacy inexact window; tick backstop still judges honestly
+            else
+                am.setExactAndAllowWhileIdle(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    android.os.SystemClock.elapsedRealtime() + whenMs, pi)
+        } catch (_: Exception) {
+            main.postDelayed(r, whenMs)   // alarm refused (policy/ROM quirks) — Handler fallback, same verdict body
+        }
+    }
+
+    /** Fired by the manifest-registered PlugFireAlarmReceiver: hops to main and runs the armed verdict body. The
+     *  receiver (process-wide, may outlive our start()) also posts a fallback runnable when no watcher is attached,
+     *  so an alarm that rings across a service restart still lands as a verdict on the next live instance. */
+    fun onFireAlarm() {
+        val r = fireRunnable ?: return
+        main.post(r)
+    }
+
+    private fun cancelFireAlarm() {
+        try {
+            val am = context.getSystemService(android.content.Context.ALARM_SERVICE) as android.app.AlarmManager
+            fireAlarm?.let { am.cancel(it); it.cancel() }
+        } catch (_: Exception) {}
+        fireAlarm = null
     }
 
     private val usbLinkDownCount = java.util.concurrent.atomic.AtomicInteger(0)
@@ -258,6 +307,7 @@ class PlugWatcher(
     fun start() {
         if (running) return
         running = true
+        live = this
         bindUdp()
         val t = Thread({ tickLoop() }, "plug-tick").apply { isDaemon = true }
         tickThread = t
@@ -267,6 +317,9 @@ class PlugWatcher(
 
     fun stop() {
         running = false
+        if (live === this) live = null
+        cancelFireAlarm()
+        fireRunnable = null
         runCatching { socket?.close() }
         socket = null
         runCatching { tickThread?.interrupt() }
@@ -441,11 +494,6 @@ class PlugWatcher(
                     // phone; it then re-armed every tick — harmless but noisy, and the stale lane still fired at
                     // the exact verdict instant). This ordering is the honest fix.
                     if (powerOffAt != 0L || silentFor >= c.staleMaxS * 1000L) return
-                } else if (!lanOk && armedByHandshake && hbQuiet < 15_000L) {
-                    // #8 drill-7 tick side: handshake arm but beats are still FRESH at verdict time == the Wi-Fi
-                    // path died mid-countdown while the host keeps talking (HB rides USB); event timer bows out,
-                    // tick holds — writeOff's probe + 30 s retries carry the cut if the LAN heals.
-                    return
                 }
                 captureEdge(c, hbQuiet)   // tick-sampled edge: HB silence >=15s arms the countdown immediately
                 val edgeAgo = if (powerOffAt == 0L) -1L else now - powerOffAt
@@ -524,6 +572,7 @@ class PlugWatcher(
         // lastArmByUdp=true and its exemption then leaked into the NEXT episode's gates (LAN hold/stale gates read
         // it as "planned shutdown"). It is set true only at real handshake arms and must die with the episode.
         state = State.IDLE; armedAt = 0L; powerOffAt = 0L; lastArmByUdp = false
+        cancelFireAlarm(); fireRunnable = null   // #9: the episode owns an exact alarm too — kill it with the episode
         log("CANCEL：$why")
         pushState(readCfg(), reason = "cancelled($why)")
     }
@@ -532,6 +581,7 @@ class PlugWatcher(
         state = State.FIRED
         firedAt = SystemClockElapsed.get()
         powerOffAt = 0L; lastArmByUdp = false   // verdict delivered — the exemption served its one episode (see cancel())
+        fireRunnable?.let { main.removeCallbacks(it) }; fireRunnable = null; cancelFireAlarm()   // #9: our own alarm must die with the verdict (tick/alarm race otherwise double-rings a no-op but keep it clean)
         // Order discipline (see plugIo's comment above): the verdict line + write FIRST, panel card SECOND —
         // pushState must never sit in front of the supply cut, even as a queued task. log()'s own pushes ride
         // throwaway threads now, so nothing cosmetic can delay OFF any more.
@@ -547,12 +597,14 @@ class PlugWatcher(
 
     private fun rearm(c: Cfg, why: String) {
         state = State.IDLE; armedAt = 0L; powerOffAt = 0L; firedAt = 0L; lastArmByUdp = false
+        cancelFireAlarm(); fireRunnable = null   // #9: alarm belongs to the episode — REARM ends it (also kills a pending-but-unrung re-arm chain)
         log("REARM：$why（本轮已复位）")
         pushState(c, reason = "rearm")
     }
 
     private fun resetToIdle(why: String) {
         state = State.IDLE; armedAt = 0L; powerOffAt = 0L; lastArmByUdp = false
+        cancelFireAlarm(); fireRunnable = null   // #9: same discipline — no orphan alarm into an IDLE state
         log("回 idle：$why")
         pushState(readCfg(), reason = why)
     }
