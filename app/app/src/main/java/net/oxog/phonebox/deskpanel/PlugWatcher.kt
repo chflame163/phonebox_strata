@@ -216,21 +216,40 @@ class PlugWatcher(
                 s.reuseAddress = true
                 s.bind(InetSocketAddress(c.listenPort))
                 socket = s
+                // SO_TIMEOUT turns the blocking receive into a ~4 s slice: on every wake we check whether HB has
+                // been silent >= 15 s while ARMED and capture the edge RIGHT THEN — event-driven, no waiting for
+                // decide()'s next 15 s tick (real-off #2 timing audit: that sampling cost 29.7 s of pure phase on
+                // top of the intended 15 s threshold). A timed-out receive is NOT an error; only stop()/rebind()'s
+                // close() exits the loop via the running guard. HB cadence is 5 s, so slices never starve handleUdp.
+                s.soTimeout = 4_000
                 val buf = ByteArray(64)
                 while (running) {
                     val p = DatagramPacket(buf, buf.size)
                     try {
                         s.receive(p)
+                        val payload = String(buf, 0, p.length, Charsets.UTF_8).trim()
+                        if (payload.startsWith("SHUTDOWN") || payload.startsWith("HB")) handleUdp(payload, readCfg())
+                    } catch (_: java.net.SocketTimeoutException) {
+                        hbWatchTick()
+                        continue
                     } catch (_: Exception) {
                         continue // closed by stop()/rebind(): loop guard ends it
                     }
-                    val payload = String(buf, 0, p.length, Charsets.UTF_8).trim()
-                    if (payload.startsWith("SHUTDOWN") || payload.startsWith("HB")) handleUdp(payload, readCfg())
                 }
             } catch (e: Exception) {
                 log("UDP 监听失败: ${e.message}")
             }
         }, "plug-udp").apply { isDaemon = true }.start()
+    }
+
+    /** Fast-path edge capture on the UDP thread — the same predicate captureEdge() uses, minus its idempotence
+     *  guard (which makes this a no-op if the tick already got there first). CANCEL discipline is untouched:
+     *  any HB resume still cancels while inside bootClearS, so a Wi-Fi flake can never cut our own supply. */
+    private fun hbWatchTick() {
+        if (state != State.ARMED || powerOffAt != 0L) return
+        val c = readCfg()
+        if (!c.enabled) return
+        captureEdge(c, hbSilenceMs())
     }
 
     /** Debug aid for the dry-run matrix (broadcast entry, never a production path). */
