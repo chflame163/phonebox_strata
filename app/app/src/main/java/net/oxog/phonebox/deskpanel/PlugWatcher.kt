@@ -77,6 +77,7 @@ class PlugWatcher(
     @Volatile private var lastPluggedFlag = true  // live plug state as far as the watcher knows (sticky + edges)
     @Volatile private var lastArmByUdp = false    // true when the most recent arm came from a UDP SHUTDOWN (handshake, not boot silence)
     @Volatile private var edgeWasHb = false       // provenance of powerOffAt: HB-silence edges keep the hostDead gate
+    @Volatile private var fireRunnable: Runnable? = null   // event-driven FIRE timer (armFireTimer); tick remains backstop
 
     companion object {
         /** BatteryManager.BATTERY_STATUS_FULL sentinel passed through batteryLevel() by MainActivity when the HAL
@@ -99,7 +100,9 @@ class PlugWatcher(
             lastCfgKeys = c.keys.sorted().joinToString(",")
             android.util.Log.i("PlugWatcher", "CFG keys=${lastCfgKeys.take(300)} delay=${c["display.plugDelaySec"]} dry=${c["display.plugDryRun"]}")
         }
-        val delay = (c["display.plugDelaySec"] as? Number)?.toInt()?.coerceIn(15, 3600) ?: 180
+        // field default 150 s (real-off #4 tuning: event-driven FIRE made the tick-phase tax disappear, so the
+        // budget moved entirely into delay; reboot grace = delay - bootClear ≈ 105 s still covers BIOS+load POST).
+        val delay = (c["display.plugDelaySec"] as? Number)?.toInt()?.coerceIn(15, 3600) ?: 150
         return Cfg(
             enabled = (c["display.plugWatcher"] as? Boolean) ?: true,
             dry = (c["display.plugDryRun"] as? Boolean) ?: true,
@@ -160,8 +163,45 @@ class PlugWatcher(
             powerOffAt = SystemClockElapsed.get()
             edgeWasHb = byHb
             log("掉电沿捕获（plugged=${pluggedNow()} usb=${usbLinkUp()}），${c.delayS}s 后发火（dry=${c.dry}）")
+            armFireTimer(c)   // event-driven FIRE: land at powerOffAt+delayS exactly, not whenever the next tick feels like it
             pushState(c, reason = "power-edge")
         }
+    }
+
+    /** One-shot main-thread timer that starts the countdown's END at capture time instead of sampling its start
+     *  every 15 s (real-off #3 audit: a perfectly-timed edge still died one tick late — +228.8 s vs +180). The
+     *  tick stays as backstop; whoever lands the verdict first wins (fire() is idempotent via state!=IDLE guard
+     *  on both sides). HB provenance needs bootConfirmS of agent silence, but every delay floor (15 s) ≥ the
+     *  confirm default (60 s)? no — floors allow 15: with delay<bootConfirm the timer fires early-ish, decide()
+     *  simply re-arms it until the proof window closes. */
+    private fun armFireTimer(c: Cfg) {
+        val p = powerOffAt
+        if (state != State.ARMED || p == 0L) return
+        fireRunnable?.let { main.removeCallbacks(it) }
+        val a = agentDataAt()
+        val silentFor = if (a == 0L) SystemClockElapsed.get() else SystemClockElapsed.get() - a   // no frame yet: treat as fully silent (boot phase never rides this lane anyway)
+        val gate = if (edgeWasHb) c.bootConfirmS * 1000L - silentFor.coerceAtLeast(0L) else 0L
+        val delayLeft = c.delayS * 1000L - (SystemClockElapsed.get() - p).coerceAtLeast(0L)
+        if (delayLeft <= 0L && gate <= 0L) { fire(c, "掉电沿后已满 ${c.delayS}s（event）"); return }
+        val r = Runnable {
+            fireRunnable = null
+            if (powerOffAt !== p) return@Runnable   // stale timer: edge re-captured (flap) moved the clock — a fresher one owns this
+            if (!running || state != State.ARMED || powerOffAt == 0L) return@Runnable  // cancelled/rearmed/structural change — tick owns the rest
+            val c2 = readCfg()
+            val now2 = SystemClockElapsed.get()
+            val silent2 = if (agentDataAt() == 0L) 0L else now2 - agentDataAt()
+            val proven2 = !edgeWasHb || silent2 >= c2.bootConfirmS * 1000L
+            // a flapping edge can re-arm the timer forever while silence stays young (the T3 phantom-port case:
+            // edges land on an ALIVE host — silence never grows, cancel never triggers). Bound the loop: once
+            // edge+delayS+60 s passes, silence is YOUNGER than bootConfirm and still no cancel happened — that
+            // is a live-host weirdness; hand the verdict to decide()'s fallback branches (no unbounded churn).
+            val overdue = now2 - powerOffAt >= (c2.delayS + 60) * 1000L
+            if (!proven2 && !overdue) { armFireTimer(c2); return@Runnable }             // proof window still open — recheck later
+            if (now2 - powerOffAt >= c2.delayS * 1000L && proven2) fire(c2, "掉电沿后已满 ${c2.delayS}s（event）")
+            // else: fall through silently — the tick owns this verdict from here on
+        }
+        fireRunnable = r
+        main.postDelayed(r, maxOf(500L, minOf(delayLeft, if (gate > 0L) gate else Long.MAX_VALUE)))
     }
 
     private val usbLinkDownCount = java.util.concurrent.atomic.AtomicInteger(0)
@@ -336,11 +376,17 @@ class PlugWatcher(
                 // supply); structural edges (plug-loss / USB-gadget-death) are self-proving and fire on delay alone.
                 val edgeProven = if (edgeWasHb) silentFor >= c.bootConfirmS * 1000L else true
                 if (edgeAgo >= c.delayS * 1000L && edgeProven) {
-                    fire(c, "掉电沿后已满 ${c.delayS}s")
+                    fire(c, "掉电沿后已满 ${c.delayS}s")   // tick backstop (or the event timer landing the same verdict ms earlier)
                 } else if (powerOffAt == 0L && armedAgo >= c.delayS * 1000L && hostDead) {
                     // 握手 arm + delay 过点 + agent 确死 — ErP/hub 沿没捕获（本 wiring VBUS 假上电）时的兜底火路
                     fire(c, "握手 arm+${armedAgo / 1000}s 且 agent 确死（沿未捕获，hub/VBUS 假上电）")
-                } else if (edgeAgo < 0 && silentFor >= c.staleMaxS * 1000L) {
+                } else if (edgeAgo < 0 && silentFor >= c.staleMaxS * 1000L && hbQuiet >= 15_000L) {
+                    // HB gate (reboot-misfire post-mortem, 2026-11-25): the stale lane used to cut with ZERO grace —
+                    // a Wi-Fi-only outage ≥300 s would silently disarm the reboot tolerance, so every planned reboot
+                    // after it died instantly on the handshake (this is what ate the 09:44 reboot: my drill-killed
+                    // agent left silence=345s, stale fired 8 ms after ARM). Fresh HB == host alive-but-WiFi-dead →
+                    // hold; the cancel path still releases within bootClearS once any data lane resumes. Real-off
+                    // semantics unchanged (HB dies with the host, so hbQuiet is trivially ≥15 s there).
                     fire(c, "stale 兜底：静默 ${silentFor / 1000}s ≥ ${c.staleMaxS}s 且未见掉电沿（ErP 失效？）")
                 }
             }
