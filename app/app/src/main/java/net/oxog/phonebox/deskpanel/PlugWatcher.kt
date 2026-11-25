@@ -100,9 +100,12 @@ class PlugWatcher(
             lastCfgKeys = c.keys.sorted().joinToString(",")
             android.util.Log.i("PlugWatcher", "CFG keys=${lastCfgKeys.take(300)} delay=${c["display.plugDelaySec"]} dry=${c["display.plugDryRun"]}")
         }
-        // field default 150 s (real-off #4 tuning: event-driven FIRE made the tick-phase tax disappear, so the
-        // budget moved entirely into delay; reboot grace = delay - bootClear ≈ 105 s still covers BIOS+load POST).
-        val delay = (c["display.plugDelaySec"] as? Number)?.toInt()?.coerceIn(15, 3600) ?: 150
+        // field default 90 s (real-off #4 tuning chain: event FIRE killed the tick tax; residual audit costs are
+        // the confirm-gate catch-up (~50-70 s, only bites when data lanes died pre-SIGTERM) + the outlet's own
+        // ErP reboot window (~19 s, physical); delay now offsets them. REBOOT CAVEAT: bootConfirm(60)+POST-load
+        // can exceed 90 on cold boots — if a reboot ever cuts power, raise plugDelaySec (agent config display.plug*)
+        // back toward 150-180; poweroff's ~2.5 min is worth the trade at current settings.
+        val delay = (c["display.plugDelaySec"] as? Number)?.toInt()?.coerceIn(15, 3600) ?: 90
         return Cfg(
             enabled = (c["display.plugWatcher"] as? Boolean) ?: true,
             dry = (c["display.plugDryRun"] as? Boolean) ?: true,
@@ -381,10 +384,14 @@ class PlugWatcher(
                 // proven by intent (the host announced its own death seconds ago), which no Wi-Fi flake can fake.
                 val lanOk = hbQuiet in 0..14_999L          // fresh HB = my LAN path demonstrably works right now
                 val armedByHandshake = lastArmByUdp
-                if (!lanOk && !armedByHandshake && (powerOffAt != 0L || silentFor >= c.staleMaxS * 1000L)) {
-                    return   // blind phone with a verdict due: structural edge already captured, or stale would fire
-                }                             // now — hold instead of cutting on a LAN the phone can't reach. Pre-verdict
-                                            // silence-only episodes fall through so captureEdge keeps timing honestly.
+                if (!lanOk && !armedByHandshake) {
+                    // blind phone with a verdict due → hold, don't cut through a LAN that can't deliver. Pre-verdict
+                    // silence-only episodes fall through so captureEdge keeps the countdown honestly clocked (the
+                    // 10:06 real-off audit: gate placed AFTER edge-capture left the event timer armed on a blind
+                    // phone; it then re-armed every tick — harmless but noisy, and the stale lane still fired at
+                    // the exact verdict instant). This ordering is the honest fix.
+                    if (powerOffAt != 0L || silentFor >= c.staleMaxS * 1000L) return
+                }
                 captureEdge(c, hbQuiet)   // tick-sampled edge: HB silence >=15s arms the countdown immediately
                 val edgeAgo = if (powerOffAt == 0L) -1L else now - powerOffAt
                 val hostDead = silentFor >= c.bootConfirmS * 1000L   // agent 静默过 boot 确认阈值 = 主机确死
@@ -407,6 +414,24 @@ class PlugWatcher(
                 }
             }
             State.FIRED -> {
+                // LAN gate for the fired-but-hot state (real-off #4 + the user's "Wi-Fi坏了且主机也哑=不发" call):
+                // writeOff's pre-probe retries every 30 s while the outlet stays ON, and a phone whose own Wi-Fi is
+                // down probes nothing but its dead LAN. FIRED-with-no-OFF_OK == the supply never actually dropped
+                // (powerOn() sets firedAt=0 on a confirmed ON, so this branch only lives while the cut is pending) —
+                // if we can't even hear the host's UDP heartbeat, the episode is blind-by-definition: back to IDLE,
+                // no signal sent. A planned SHUTDOWN-handshake arm keeps its verdict (intent proven; and its LAN
+                // demonstrably worked seconds ago when the handshake arrived). HB silence >=15 s also satisfies the
+                // gate the same way — decide() is a tick path, so hbQuiet there == "the host's beats stopped", which
+                // is exactly the dead-host proof this lane needs. Fresh HB inside 15 s == host alive -> hold for
+                // the cancel path (bootClearS releases within its window; stale re-arm covers the rest).
+                if (firedAt != 0L && now - firedAt >= c.delayS * 1000L) {
+                    val hbQuietF = hbSilenceMs()
+                    // a beat seen ONCE at any point in this episode's life is the host-died-with-the-LAN proof —
+                    // the strict "fresh within 15 s" window is only for pre-cut lanes; post-FIRE hold just needs to
+                    // know we're not talking to a wall (hbAt==0 == UDP rebind/never heard: that IS blind).
+                    val lanOkF = hbQuietF >= 0L || lastArmByUdp
+                    if (!lanOkF && silentFor >= c.bootClearS * 1000L) resetToIdle("发火后未关成且主机/插座双哑（LAN hold，不发关闭信号）")
+                }
                 // rearm 路：服务器重新在线（插座已手动 --on、服务器已回来）——同样以数据新鲜度为准
                 if (silentFor < c.bootClearS * 1000L) rearm(c, "agent 数据恢复在线")
             }
@@ -439,7 +464,11 @@ class PlugWatcher(
     }
 
     private fun cancel(why: String) {
-        state = State.IDLE; armedAt = 0L; powerOffAt = 0L
+        // clear the handshake provenance too (the 10:06 post-audit finding): a stale UDP SHUTDOWN frame — e.g. one
+        // buffered/delivered late across a reboot, or left over from a previous episode — used to re-arm with
+        // lastArmByUdp=true and its exemption then leaked into the NEXT episode's gates (LAN hold/stale gates read
+        // it as "planned shutdown"). It is set true only at real handshake arms and must die with the episode.
+        state = State.IDLE; armedAt = 0L; powerOffAt = 0L; lastArmByUdp = false
         log("CANCEL：$why")
         pushState(readCfg(), reason = "cancelled($why)")
     }
@@ -447,7 +476,7 @@ class PlugWatcher(
     private fun fire(c: Cfg, why: String) {
         state = State.FIRED
         firedAt = SystemClockElapsed.get()
-        powerOffAt = 0L
+        powerOffAt = 0L; lastArmByUdp = false   // verdict delivered — the exemption served its one episode (see cancel())
         // Order discipline (see plugIo's comment above): the verdict line + write FIRST, panel card SECOND —
         // pushState must never sit in front of the supply cut, even as a queued task. log()'s own pushes ride
         // throwaway threads now, so nothing cosmetic can delay OFF any more.
@@ -462,13 +491,13 @@ class PlugWatcher(
     }
 
     private fun rearm(c: Cfg, why: String) {
-        state = State.IDLE; armedAt = 0L; powerOffAt = 0L; firedAt = 0L
+        state = State.IDLE; armedAt = 0L; powerOffAt = 0L; firedAt = 0L; lastArmByUdp = false
         log("REARM：$why（本轮已复位）")
         pushState(c, reason = "rearm")
     }
 
     private fun resetToIdle(why: String) {
-        state = State.IDLE; armedAt = 0L; powerOffAt = 0L
+        state = State.IDLE; armedAt = 0L; powerOffAt = 0L; lastArmByUdp = false
         log("回 idle：$why")
         pushState(readCfg(), reason = why)
     }
@@ -530,6 +559,17 @@ class PlugWatcher(
         }
         try {
             val d = MiioClient(c.plugIp, c.plugToken)
+            // pre-probe gate (real-off #4 audit: FIRE→OFF_OK ate 18.9 s because the outlet itself was mid-reboot
+            // from its own ErP drop — the handshake's set simply vanished into a device that couldn't answer):
+            // one cheap get_properties first; no reply == the plug isn't listening yet, skip the whole exchange
+            // and let the retry below catch it once the outlet is back. The probe doubles as proof-of-LAN for the
+            // user's "Wi-Fi 坏了且主机也哑 = 不发" policy at the one moment it physically matters (delivery time).
+            try { d.call("get_properties", JSONArray().put(JSONObject().put("siid", 2).put("piid", 1))) }
+            catch (e: Exception) {
+                log("fire 预检无应答（插座/Wi-Fi 未就绪），30s 后重试：${e.message}")
+                main.postDelayed({ if (running && state == State.FIRED) plugIo.execute { writeOff(c) } }, 30_000L)
+                return
+            }
             val set = JSONArray().put(JSONObject().put("siid", 2).put("piid", 1).put("value", false))
             d.call("set_properties", set)
             val back = d.call("get_properties", JSONArray().put(JSONObject().put("siid", 2).put("piid", 1)))
