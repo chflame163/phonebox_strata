@@ -12,9 +12,15 @@
 > 三个子系统：    
 > **PhoneBox 面板**（Strata 推理服务器的 .NET agent + 一加 3T 面板 App）    
 > **小米智能插座功耗上屏**（1 Hz 只读墙电/今日 kWh 波形）    
-> **NAS 联动延时断电**（服务器关机时给群晖NAS发送消息，延迟180 秒后断掉服务器供电插座）。
+> **关机联动延时断电**（服务器关机时发 UDP 握手/心跳给判决器 watcher，延迟后断掉服务器供电插座）。
 >
 > 本仓库是 2026-11-18 从运行现场（服务器 + 手机 + NAS + 插座）重新整理的，目标：照 README 从零走一遍，即可 100% 还原。  
+>
+> **2026-11-25 定稿更新**：断电判决器已从群晖 NAS 迁移到面板手机本机（`PlugWatcher`，常驻前台服务）。
+> 手机端 watcher 为唯一在岗方案——真关机实测 poweroff→**167 s 插座 OFF_OK**、reboot→**59 s CANCEL 保电**
+> （delay=150/dry=false）；**NAS 版（`plug-delay/nas/` python 常驻）列为过时**，已于同日从 NAS 上停用卸载
+> （unit/目录/venv 全删），仓库内仅作等价参考留存。手机本就是 kiosk 面板机，判决器随 APK 一起装、
+> 配置走 agent `display.plug*`，不再需要 NAS 常开这台机器。详见 `plug-control/README.md` C2 节。
 
 ## 1. 跑着什么（终态快照，验收基准）
 
@@ -23,9 +29,9 @@
 | 服务器 | PhoneBox agent（dotnet 10，0.9.4+fork）user 服务                                                                       | `curl 127.0.0.1:8765/api/state` 有 GPU 字段                    |
 | 服务器 | `pb-strata-pushd`（1 s 常驻推送）· `pb-plug-read`（1 Hz 墙电）· `pb-chargeguard.timer`（60 s）· `pb-bootcheck`（可选） | `systemctl --user status …` 全 active；`/api/push` 恰 7 个 key |
 | 服务器 | 系统钩子 `phonebox-sleep/wake`（关机熄屏/开机亮屏）· `plug-heartbeat/notify`（断电联动）                               | `systemctl is-enabled` 全 enabled                              |
-| 手机   | 3T / LineageOS 18.1 / kiosk 桌面 / 在装 APK `vc31 0.9.4+fork`（md5 `2558313e…`）                                       | home 页 12 卡实时刷新；三场景见 `phone-behavior/README.md`     |
-| NAS    | `plug-watcher`（DSM 7 systemd，开机自启实测过）                                                                        | journal 持续 alive；真关机 181 s 断电实测过（2026-11-17）      |
-| 插座   | xiaomi.plug.04：面板读瓦数（只读）+ NAS 写开关（唯一写者）                                                             | `nas_off.py --check` 返回 CHECK_OK                             |
+| 手机   | 3T / LineageOS 18.1 / kiosk 桌面 / 在装 APK `0.9.5+fork`（含插座判决器 `PlugWatcher`，**2026-11-25 起唯一在岗**）     | home 页 12 卡实时刷新；三场景见 `phone-behavior/README.md`；watcher 前台通知常驻、FIRE→OFF_OK ≤1 s |
+| ~~NAS~~ | ~~`plug-watcher`（DSM 7 systemd）~~ **已退役卸载（2026-11-25）**，功能由手机版 watcher 替换                      | NAS 上无残留；仓库 `plug-delay/nas/` 仅参考                    |
+| 插座   | xiaomi.plug.04：面板读瓦数（只读）+ 手机 watcher 写开关（唯一写者，miio UDP 直连）                                     | fire 后回读 `CHECK_OK/OFF_OK value:false`                      |
 
 ## 2. 全景一图
 
@@ -33,8 +39,8 @@
 Strata引擎:8080 ─┐                                   ┌─ SSE 1Hz 状态帧(pushItems) ─► 3T 手机面板
 plug-read 1Hz ───┼─ pb-strata-pushd 1s ─POST 8765──► PhoneBox agent ─ adb reverse ─┤   12 个控件
                  │ (7 个 push key)                   └─ 开机枚举→自动亮屏进面板      └─ 息屏/深睡策略
-服务器电源 ◄── 局域网 miio（NAS 唯一写者）── 群晖 plug_watcher ◄── UDP HB/SHUTDOWN ── 服务器 heartbeat/notify
-（完整数据流与实测时序：docs/ARCHITECTURE.md）
+服务器电源 ◄── 局域网 miio（手机 watcher 唯一写者）── 3T 面板机 PlugWatcher ◄── UDP HB/SHUTDOWN ── 服务器 heartbeat/notify
+（旧 NAS 路已退役；完整数据流与实测时序：docs/ARCHITECTURE.md + plug-control/README.md C2 验收表）
 ```
 
 ## 3. 目录地图
@@ -45,7 +51,7 @@ plug-read 1Hz ───┼─ pb-strata-pushd 1s ─POST 8765──► PhoneBox 
 | `agent/`          | 服务器后台源码（.NET 10；采集/push 存储/唤醒/kiosk 协议）                   | `agent/README.md`          |
 | `panel/`          | 控件数据采集脚本、两个 HTML 控件样式、页面布局快照（7 key 契约表）          | `panel/README.md`          |
 | `phone-behavior/` | 充电三层策略 + 关机熄屏/开机亮屏钩子 + 深睡配套（服务器侧脚本与 unit）      | `phone-behavior/README.md` |
-| `plug-control/`   | 功耗只读采集 + NAS 延时断电（server/nas 两侧）+ 属性实测表 + token 获取指南 | `plug-control/README.md`   |
+| `plug-control/`   | 功耗只读采集 + 关机延时断电（server 侧心跳/手机版判决器；NAS 版已过时留存）+ 属性实测表 + token 获取指南 | `plug-control/README.md`   |
 | `phone-setup/`    | 裸机手机到面板机：LineageOS 刷机、kiosk、adb/udev、BIOS ErP                 | `phone-setup/README.md`    |
 | `tools/`          | 构建配方（APK 全自动脚本）、上游测试/冒烟工具、脱敏还原脚本                 | `tools/README.md`          |
 | `docs/`           | 架构与数据流 · 脱敏对照表 · 代码来源谱系 · 上游 CHANGELOG                   | 各自                       |
@@ -74,8 +80,9 @@ MIoT spec、GPT 参考文档）的链接与指纹在 **`docs/CODE-SOURCES.md`**�
 ## 6. 前置条件与版本钉
 
 硬件：一台 Linux 服务器（本案例 Ubuntu 24.04 + RTX 3090 + Strata 引擎）、一台 USB 可长期
-挂载的 Android 手机（本案例 3T/Lineage18.1）、一只 xiaomi.plug.04 智能插座、一台常开 NAS
-（本案例群晖 DSM 7）。软件版本钉与**大型工具下载链接**（dotnet 10 / JDK17 / Android SDK35+BT34 /
+挂载的 Android 手机（本案例 3T/Lineage18.1，兼跑插座判决器）、一只 xiaomi.plug.04 智能插座。
+~~一台常开 NAS（判决器宿主）~~ **不再必需**——2026-11-25 起判决器迁入面板手机，NAS 退役卸载；
+仓库里 NAS 版部署步骤仅作历史参考。软件版本钉与**大型工具下载链接**（dotnet 10 / JDK17 / Android SDK35+BT34 /
 gradle 8.11.1 / platform-tools / python-miio 0.5.12 / LineageOS 镜像及 md5 / token_extractor.exe
 及 sha256）全部集中在 **`tools/README.md`**。BIOS：ErP 开、来电自启开（`phone-setup/README.md`）。
 
@@ -112,9 +119,11 @@ gradle 8.11.1 / platform-tools / python-miio 0.5.12 / LineageOS 镜像及 md5 / 
 **Step 8 插座功耗采集**：先按 `plug-control/docs/token-extraction.md` 拿 `<plug-ip>+<plug-token>`；
 再按 `plug-control/README.md` “部署 A”（venv、env、reader unit）。验收：keys 里多出 `plug_power`。
 
-**Step 9 NAS 延时断电**：按 `plug-control/README.md` “部署 B/C”（服务器两 unit + NAS watcher；
-**先保持 dry-run**）。验收：短阈值三路测试（失联 FIRE / 握手 FIRE / rearm）→ 改回 180 →
-`PLUG_OFF_CMD` 换真命令 → 一次真 `poweroff` 复现“握手+181 s 断电+来电自启回来”。
+**Step 9 关机延时断电（手机版）**：按 `plug-control/README.md` “部署 B + C2”（服务器两 unit
+plug-heartbeat/notify + 手机 APK 内置 watcher，agent `display.plug*` 开启；**先保持 dry-run**）。
+验收：短阈值三路测试（失联 FIRE / 握手 FIRE / rearm）→ `plugDelaySec=150`、`plugDryRun=false` →
+一次真 `poweroff` 复现“≈167 s 插座 OFF_OK + 来电自启回来自动 REARM”，再一次真 `reboot`
+复现“agent <60 s 复活 → CANCEL、插座全程通电”。~~NAS 版（部署 C）已过时，不需要装。~~
 
 **Step 10 控件与布局上屏**：按 `panel/README.md` §3——回植快照（两个 HTML 全文
 粘贴；三个 gauge 的 max=24/512/350）。验收 = 第 1 节状态表的手机侧各行 + 截屏比对
@@ -127,10 +136,11 @@ gradle 8.11.1 / platform-tools / python-miio 0.5.12 / LineageOS 镜像及 md5 / 
 换面板布局：在 8765 改完记得重跑快照（脱敏后覆盖 `panel/layout/`，纪律见 `panel/README.md`）。
 单组件回滚一行：见各 README 末节；agent 换代用 `cp --remove-destination`。
 重启次序无要求：agent↔APK 协议双向兼容；pushd 依赖 agent（unit 已 After=phonebox.service）；
-断电联动依赖 NAS 常开。插座换型号：先跑 `plug-control/power-read/probe/plug_probe.py` 重新验
-属性，再改 reader/push 脚本的 siid/piid（只有一处）。
+断电联动只依赖面板手机在岗（常驻充电+kiosk，**不再依赖 NAS**）。插座换型号：先跑
+`plug-control/power-read/probe/plug_probe.py` 重新验属性，再改 reader/push 脚本的 siid/piid（只有一处）。
 排障取数口：`/api/state|push|phones|lan`、`journalctl --user -u pb-*`、
-`adb exec-out screencap -p`、NAS `journalctl -u plug-watcher`。
+`adb exec-out screencap -p`、手机判决日志 `adb logcat -s PlugWatcher:*` + 机内
+`files/plug_watch.log`（面板 System 页两卡同源）。
 
 ## 9. 测试与验证
 
@@ -139,10 +149,13 @@ build/test 都必须指到工程目录**，裸 `dotnet build` 会 MSB1003）；`
 `tools/ui-tests` 跑上游面板回归（demo-server 假 agent，离线可跑）；chargeguard 用
 `PB_ONESHOT` 注入验状态机（`phone-behavior/README.md`）；plug-delay 用短阈值三路与真关机；
 手机行为用三场景。**每次改动后的最小验收**：push keys 数量与节奏、三场景、
-`nas_off.py --check`、一次真 reboot。
+手机版 fire 后回读 `OFF_OK/CHECK_OK`、一次真 reboot（必须 CANCEL 零 FIRE）。
 
 ## 10. 边界与已知事项
 
-Strata 引擎没跑时 strata_* 断供、其余照常；1 Hz UDP 的 24 h 长跑稳定性在观察；NAS 上 nas_off 三件套仍是现场硬编码旧版（等价未迁移，见 `plug-control/README.md` 末节）；
+Strata 引擎没跑时 strata_* 断供、其余照常；1 Hz UDP 的 24 h 长跑稳定性在观察；
+~~NAS 上 nas_off 三件套仍是现场硬编码旧版（等价未迁移）~~ **已随 NAS 版整体卸载而失效**
+（判决器=手机版 PlugWatcher，内置 miio 客户端，见 `plug-delay/phone/`）；
 agent 原地重启（非 reboot）后手机若已深睡需等一个 doze 维护窗/分钟级自愈；
+插座被重置/重新配网后 token 变——三处存放点同步换（见 `plug-control/README.md` 红线 3）。
 
