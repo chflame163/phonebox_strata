@@ -1,13 +1,8 @@
-
-
 # 把一台Strata 服务器的状态搬进旧手机屏幕
 
 本项目是基于 [ersinkoc/phonebox](https://github.com/ersinkoc/phonebox) 的修改版，使用旧手机监控 Linux 服务器上的 Strata 活动。
 
 ![面板机 home 页实拍照（2026-11-18）](images/cover.jpg)
-
-
-
 
 > 三个子系统：    
 > **PhoneBox 面板**（Strata 推理服务器的 .NET agent + 一加 3T 面板 App）    
@@ -24,14 +19,14 @@
 
 ## 1. 跑着什么（终态快照，验收基准）
 
-| 侧     | 组件                                                                                                                   | 状态判据                                                       |
-| ------ | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| 服务器 | PhoneBox agent（dotnet 10，0.9.4+fork）user 服务                                                                       | `curl 127.0.0.1:8765/api/state` 有 GPU 字段                    |
-| 服务器 | `pb-strata-pushd`（1 s 常驻推送）· `pb-plug-read`（1 Hz 墙电）· `pb-chargeguard.timer`（60 s）· `pb-bootcheck`（可选） | `systemctl --user status …` 全 active；`/api/push` 恰 7 个 key |
-| 服务器 | 系统钩子 `phonebox-sleep/wake`（关机熄屏/开机亮屏）· `plug-heartbeat/notify`（断电联动）                               | `systemctl is-enabled` 全 enabled                              |
-| 手机   | 3T / LineageOS 18.1 / kiosk 桌面 / 在装 APK `0.9.5+fork`（含插座判决器 `PlugWatcher`，**2026-11-25 起唯一在岗**）     | home 页 12 卡实时刷新；三场景见 `phone-behavior/README.md`；watcher 前台通知常驻、FIRE→OFF_OK ≤1 s |
-| ~~NAS~~ | ~~`plug-watcher`（DSM 7 systemd）~~ **已退役卸载（2026-11-25）**，功能由手机版 watcher 替换                      | NAS 上无残留；仓库 `plug-delay/nas/` 仅参考                    |
-| 插座   | xiaomi.plug.04：面板读瓦数（只读）+ 手机 watcher 写开关（唯一写者，miio UDP 直连）                                     | fire 后回读 `CHECK_OK/OFF_OK value:false`                      |
+| 侧      | 组件                                                                                                                   | 状态判据                                                                                           |
+| ------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| 服务器  | PhoneBox agent（dotnet 10，0.9.4+fork）user 服务                                                                       | `curl 127.0.0.1:8765/api/state` 有 GPU 字段                                                        |
+| 服务器  | `pb-strata-pushd`（1 s 常驻推送）· `pb-plug-read`（1 Hz 墙电）· `pb-chargeguard.timer`（60 s）· `pb-bootcheck`（可选） | `systemctl --user status …` 全 active；`/api/push` 恰 7 个 key                                     |
+| 服务器  | 系统钩子 `phonebox-sleep/wake`（关机熄屏/开机亮屏）· `plug-heartbeat/notify`（断电联动）                               | `systemctl is-enabled` 全 enabled                                                                  |
+| 手机    | 3T / LineageOS 18.1 / kiosk 桌面 / 在装 APK `0.9.5+fork`（含插座判决器 `PlugWatcher`）                                 | home 页 12 卡实时刷新；三场景见 `phone-behavior/README.md`；watcher 前台通知常驻、FIRE→OFF_OK ≤1 s |
+| ~~NAS~~ | ~~`plug-watcher`（DSM 7 systemd）~~ **已退役卸载（2026-11-25）**，功能由手机版 watcher 替换                            | NAS 上无残留；仓库 `plug-delay/nas/` 仅参考                                                        |
+| 插座    | xiaomi.plug.04：面板读瓦数（只读）+ 手机 watcher 写开关（唯一写者，miio UDP 直连）                                     | fire 后回读 `CHECK_OK/OFF_OK value:false`                                                          |
 
 ## 2. 全景一图
 
@@ -45,17 +40,17 @@ plug-read 1Hz ───┼─ pb-strata-pushd 1s ─POST 8765──► PhoneBox 
 
 ## 3. 目录地图
 
-| 目录              | 是什么                                                                      | 文档                       |
-| ----------------- | --------------------------------------------------------------------------- | -------------------------- |
-| `app/`            | 手机 APK 源码（Android 工程；息屏/深睡/断流地板/控件字号的实现处）          | `app/README.md`            |
-| `agent/`          | 服务器后台源码（.NET 10；采集/push 存储/唤醒/kiosk 协议）                   | `agent/README.md`          |
-| `panel/`          | 控件数据采集脚本、两个 HTML 控件样式、页面布局快照（7 key 契约表）          | `panel/README.md`          |
-| `phone-behavior/` | 充电三层策略 + 关机熄屏/开机亮屏钩子 + 深睡配套（服务器侧脚本与 unit）      | `phone-behavior/README.md` |
+| 目录              | 是什么                                                                                                   | 文档                       |
+| ----------------- | -------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `app/`            | 手机 APK 源码（Android 工程；息屏/深睡/断流地板/控件字号的实现处）                                       | `app/README.md`            |
+| `agent/`          | 服务器后台源码（.NET 10；采集/push 存储/唤醒/kiosk 协议）                                                | `agent/README.md`          |
+| `panel/`          | 控件数据采集脚本、两个 HTML 控件样式、页面布局快照（7 key 契约表）                                       | `panel/README.md`          |
+| `phone-behavior/` | 充电三层策略 + 关机熄屏/开机亮屏钩子 + 深睡配套（服务器侧脚本与 unit）                                   | `phone-behavior/README.md` |
 | `plug-control/`   | 功耗只读采集 + 关机延时断电（server 侧心跳/手机版判决器；NAS 版已过时留存）+ 属性实测表 + token 获取指南 | `plug-control/README.md`   |
-| `phone-setup/`    | 裸机手机到面板机：LineageOS 刷机、kiosk、adb/udev、BIOS ErP                 | `phone-setup/README.md`    |
-| `tools/`          | 构建配方（APK 全自动脚本）、上游测试/冒烟工具、脱敏还原脚本                 | `tools/README.md`          |
-| `docs/`           | 架构与数据流 · 脱敏对照表 · 代码来源谱系 · 上游 CHANGELOG                   | 各自                       |
-| `artifacts/`      | 当前在装的 APK（现场快照，md5 记录在案；正解仍是编译）                      | `artifacts/README.md`      |
+| `phone-setup/`    | 裸机手机到面板机：LineageOS 刷机、kiosk、adb/udev、BIOS ErP                                              | `phone-setup/README.md`    |
+| `tools/`          | 构建配方（APK 全自动脚本）、上游测试/冒烟工具、脱敏还原脚本                                              | `tools/README.md`          |
+| `docs/`           | 架构与数据流 · 脱敏对照表 · 代码来源谱系 · 上游 CHANGELOG                                                | 各自                       |
+| `artifacts/`      | 当前在装的 APK（现场快照，md5 记录在案；正解仍是编译）                                                   | `artifacts/README.md`      |
 
 ## 4. 代码来源（必读声明）
 
@@ -158,4 +153,3 @@ Strata 引擎没跑时 strata_* 断供、其余照常；1 Hz UDP 的 24 h 长跑
 （判决器=手机版 PlugWatcher，内置 miio 客户端，见 `plug-delay/phone/`）；
 agent 原地重启（非 reboot）后手机若已深睡需等一个 doze 维护窗/分钟级自愈；
 插座被重置/重新配网后 token 变——三处存放点同步换（见 `plug-control/README.md` 红线 3）。
-
