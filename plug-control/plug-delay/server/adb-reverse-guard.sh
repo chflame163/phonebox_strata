@@ -3,7 +3,8 @@
 # A phone reboot wipes the reverse rule and nothing rebuilds it -> panel/push dies silently.
 # Runs as root systemd oneshot every 30s (timer); ExecStartPre waits for the device to enumerate.
 set -u
-SN=481fe5dc; PORTMAP="tcp:8765 tcp:8765"
+# SN = 面板机的 adb 序列号（现场值不进 git：部署时 `adb devices` 抄一个，或用环境变量传入）
+SN="${PB_ADG_SN:-481fe5dc}"; PORTMAP="tcp:8765 tcp:8765"
 wait_dev=0
 while ! adb -s $SN get-state >/dev/null 2>&1; do
     wait_dev=$((wait_dev+1)); [ $wait_dev -gt 40 ] && exit 0   # 120s ceiling at boot, device may be off

@@ -8,7 +8,11 @@ plug-delay/ ─ 服务器心跳/握手 → watcher 判决 → 局域网 miio 断
 ```
 
 watcher 现在有两个实现：**NAS 版**（`plug-delay/nas/`，python 常驻）与**手机版**
-（`plug-delay/phone/` + app 里的 `PlugWatcher`，2026-11-24 起 dry-run 在岗）。判决语义一致。
+（`plug-delay/phone/` + app 里的 `PlugWatcher`）。判决语义一致。**2026-11-25 定稿：手机版转正
+在岗（delay=150、dry=false），NAS 版已停用卸载**——11-24 晚手机 dry-run 全绿后 NAS 按红线 1
+stop+disable 让位，11-25 双路径真机关机验收通过（poweroff→167s 真断电 / reboot→59s CANCEL 保电），
+当天把 NAS 上的 service unit、`plug-delay/` 目录与 miio venv 全部删除；红线 1 互斥约束随单边在岗
+自然解除，仓库里的 NAS 版只作等价参考留存。
 
 ## 取证双通道（真关机对账必备，2026-11-25 #7 后加）
 
@@ -26,8 +30,8 @@ healthd st=3/c<0 = ErP 塌电物理时刻（deep-standby 断 USB 也产生同款
    或手机 PlugWatcher 非 dry 模式）和米家 App 有权写；`power-read` 那条链永远只发
    `get_properties`。验证凭据通不通一律走只读：NAS `nas_off.py --check`、手机版看 fire 后的
    `CHECK_OK` 日志（同样纯只读）。
-3. **延时在 watcher 里，不在插座里**（NAS 版 180 s；手机版由 agent 配置 `display.plugDelaySec`
-   决定，现场当前 60 s 测试值）。别去米家 App 再配“延时关闭”（插座自带那个实测只有 ~2 s，
+3. **延时在 watcher 里，不在插座里**（NAS 版曾 180 s；手机版由 agent 配置 `display.plugDelaySec`
+   决定，定稿值 150 s）。别去米家 App 再配“延时关闭”（插座自带那个实测只有 ~2 s，
    两边都设会叠加）。**插座被重置/重新配网后 token 会变**：NAS `plug-secret.env`、服务器
    `~/.config/pb_plug.env`、agent 配置 `display.plugToken` **三处都要换**，然后
    `systemctl --user restart pb-plug-read`。
@@ -81,7 +85,10 @@ sudo systemctl enable plug-notify             # 拉起即可；关机(ExecStop)�
 单播走以太网。(11-24 首次 T2 reboot 就是因为这里还指着一台已 disabled 的机器而握手全空跑；顺带发现
 **手机重启会清掉 adb reverse**，8765 断流——已在 app 侧加自愈，见部署 C2。)
 
-## 部署 C —— plug-delay NAS 侧（群晖 DSM 7）
+## 部署 C —— plug-delay NAS 侧（群晖 DSM 7，已退役 · 仅参考）
+
+> **2026-11-25 状态**：NAS 版已停用并从机器上卸载（unit/目录/venv 全删）。以下内容保留作
+> 部署史与等价实现参考；手机版转正流程见下一节 C2。
 
 ```bash
 # 家目录按现场：<nas-user> 常见在 /volume2/homes/ 而不是 /volume1（本机如此）
@@ -103,15 +110,27 @@ sudo systemctl daemon-reload && sudo systemctl enable --now plug-watcher
 SSH 自动化注意：群晖 SecureSignIn 会因频繁连接挂住会话——**单连接少开、`-o ConnectTimeout=15`**；
 NAS 上没有 pgrep；heredoc 喂 sudo 会抢 stdin。
 
-## 部署 C2 —— plug-delay 手机版（PhoneBox app，2026-11-24 起）
+## 部署 C2 —— plug-delay 手机版（PhoneBox app，**2026-11-25 定稿转正、唯一在岗**）
 
 判决器直接跑在常驻充电的桌面面板手机里（kiosk home + 前台服务），agent 侧只需把
 `display.plug*` 开起来；协议与验证工具见 `plug-delay/phone/README.md`，状态机语义 = NAS 版的镜像
 （掉电沿+delay、握手 arm+delay+hostDead、stale 兜底、电量下限——插电=永不拒臂）。
 
+### 定稿时序实测（11-25 真关机 #3/#11/#12 + reboot，全部生产参数 delay=150/dry=false）
+
+| 轮次 | 路径 | 结果 |
+|---|---|---|
+| #3（上午） | poweroff→OFF_OK | 端到端 232 s（当时 delay=180），writeOff 仅 343 ms——push 劫持修复实锤 |
+| #11 | poweroff→OFF_OK | **167 s**：ARM+0s（握手）→沿 +14.9s（HB 静默 15s 门槛）→FIRE=沿+151.6s（≈delay±2，#9/#10 定时器改造后 delay 路首次真正生效）→OFF_OK=FIRE+338ms；服务器重启后自动 REARM |
+| #12 | reboot→CANCEL | **59.3 s** 内 agent 复活→CANCEL，插座全程通电（bootConfirm=60s 确死闸顶住握手歧义）——宽容面实证 |
+
+判据口径：**poweroff 起算 OFF_OK ≈167±20 s；reboot 必须 CANCEL 零 FIRE**。端到端固定开销 =
+HB 静默门槛 15s + delay 150s（确死/闹钟/writeOff 均 <1s）。想再快只能砍这两个阈值，代价是
+reboot 宽容与确死强度——现形态已收官。
+
 ```bash
 # agent 配置（PUT /api/settings 或改 ~/.config/PhoneBox/config.json 后等一拍缓存）：
-#   display.plugWatcher=true, plugDryRun=true(转正前), plugDelaySec/bootConfirmSec/bootClearSec,
+#   display.plugWatcher=true, plugDryRun=false(转正态), plugDelaySec=150/bootConfirmSec=60/bootClearSec=45,
 #   plugCritLevel(只真电池生效), plugUdpPort=12345, plugIp/plugToken（0600 处存放，别进 git）
 # 手机侧装机（服务器 adb 直连即可）+ Doze 白名单（root，一次性）：
 adb -s <sn> install -r -t -d app-release.apk
@@ -170,12 +189,32 @@ reboot 测取消路**，需要重启请先顺手 `systemctl stop plug-heartbeat`
    回来→watcher rearm。恢复送电：`nas_off.py --on` 或米家 App；服务器靠 BIOS 来电自启。
    握手是单向的：发出即倒计时，习惯用 `shutdown -c` 取消的要注意。
 
-### NAS 现场与仓库版的差异（诚实记录）
+### NAS 现场与仓库版的差异（历史记录）
 
-NAS 上**当前实际在跑**的是 11-17 当天图快写的三个硬编码小脚本（`nas_off/on/get.py`，IP/token
-写死在源码里、不进 git），`plug-watcher.py` 本体与仓库逐字节一致；本仓库的 `nas_off.py`
-（env 读凭据 + `--check/--on` 三合一）是后来固化的等价终态，**尚未回灌 NAS**——迁移 = 拷
-`nas_off.py` + 建 `plug-secret.env`，`PLUG_OFF_CMD` 路径本就同名不用动。
+NAS 上 11-25 卸载前实际在跑的是 11-17 当天图快写的三个硬编码小脚本（`nas_off/on/get.py`，
+IP/token 写死在源码里、不进 git），`plug_watcher.py` 本体与仓库逐字节一致；本仓库的 `nas_off.py`
+（env 读凭据 + `--check/--on` 三合一）是后来固化的等价终态。**2026-11-25：NAS 版整套已从机器删除**
+（service disable+unit rm、`/volume2/homes/<nas-user>/plug-delay/` 与 `pdvenv/` 整目录），
+仓库留存可随时重建。手机版转正后不再需要“回灌 NAS”这一步。
+
+### 定稿改动清单（11-25，对应 commit 链 ef32a4b..HEAD）
+
+- `app/.../AndroidManifest.xml`：USE_EXACT_ALARM 声明 + PlugFireAlarmReceiver 注册
+- `MainActivity.kt`：SSE delivered per-connection guard pin、stream.lastDataAt 真字节门、
+  USB-gadget stamp 门（loopback 自答僵尸时钟三刀）
+- `PlugWatcher.kt`：#9/#10 判决引擎——delay 路撤 powerOffAt==0 死码门、AlarmManager
+  ELAPSED_REALTIME_WAKEUP exact alarm + PI generation requestCode、tick-rescue 看门狗、
+  DIAG 三表时钟面包屑 push（plug_diagtrail）、LAN-alive 闸+握手豁免+episode-lifetime、
+  writeOff 预检闸、staleMax=max(180, delay+120)、默认 delay=90→现场 cfg 150
+- `PlugWatchService.kt`：ACTION_FIRE_ALARM hop + receiver 直连双保险（#10b）
+- `PlugFireAlarmReceiver.kt`：新增——exact alarm 投递 hop（noteAlarmBeat + 冷备 startService）
+
+### 脱敏状态核查（git push 前必做，11-25 已核）
+
+tracked 文件内 grep `<plug-ip>/<plug-token>/现场 Wi-Fi IP/设备 SN/MAC/SSH 口令` 全零命中：
+插座 token、服务器/NAS/手机三台机器的局域网地址均未入库（.env 本体与 agent config.json 都不进
+git，README 用 `<nas-ip>`/`<sn>`/`<plug-token>` 占位）。`server/adb-reverse-guard.sh` 的现场 SN
+已改为 `PB_ADG_SN` 环境变量优先、仓库默认值仅示例性质。
 
 ## docs/ 索引
 
