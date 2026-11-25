@@ -164,7 +164,13 @@ class PlugWatcher(
         val byHb = hbSilentMs >= 15_000L
         if (!pluggedNow() || usbLinkDownCount.get() > 0 && !usbLinkUp() || byHb) {
             powerOffAt = SystemClockElapsed.get()
-            edgeWasHb = byHb
+            // provenance reclass (real-off #5 audit, edge+303 s instead of +90): a SHUTDOWN-handshake arm is its
+            // OWN death certificate — the host announced its dying seconds before SIGTERM, so "agent HTTP silent >=
+            // bootConfirm" adds nothing but latency there. The lane lied because agentDataAt kept getting refreshed
+            // by the Wi-Fi cfg-GET zombie flapping (TCP hangs -> read timeouts -> every failed attempt logged as a
+            // fresh frame; #4 dragged 50 s, #5 dragged 291 s). HB edges WITHOUT a handshake keep the strict gate —
+            // there, agent silence is still the only thing distinguishing Wi-Fi flake from dead host.
+            edgeWasHb = byHb && !lastArmByUdp
             log("掉电沿捕获（plugged=${pluggedNow()} usb=${usbLinkUp()}），${c.delayS}s 后发火（dry=${c.dry}）")
             armFireTimer(c)   // event-driven FIRE: land at powerOffAt+delayS exactly, not whenever the next tick feels like it
             pushState(c, reason = "power-edge")
@@ -186,7 +192,9 @@ class PlugWatcher(
         if (hbSilenceMs().let { it < 0L || it >= 15_000L } && !lastArmByUdp) return
         val a = agentDataAt()
         val silentFor = if (a == 0L) SystemClockElapsed.get() else SystemClockElapsed.get() - a   // no frame yet: treat as fully silent (boot phase never rides this lane anyway)
-        val gate = if (edgeWasHb) c.bootConfirmS * 1000L - silentFor.coerceAtLeast(0L) else 0L
+        // handshake arms skip the confirm gate for the same reason captureEdge reclasses their provenance —
+        // intent is a stronger death proof than HTTP silence (see captureEdge's comment, real-off #5).
+        val gate = if (edgeWasHb && !lastArmByUdp) c.bootConfirmS * 1000L - silentFor.coerceAtLeast(0L) else 0L
         val delayLeft = c.delayS * 1000L - (SystemClockElapsed.get() - p).coerceAtLeast(0L)
         if (delayLeft <= 0L && gate <= 0L) { fire(c, "掉电沿后已满 ${c.delayS}s（event）"); return }
         val r = Runnable {
