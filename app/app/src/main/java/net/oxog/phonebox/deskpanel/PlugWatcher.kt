@@ -197,7 +197,6 @@ class PlugWatcher(
         // intent is a stronger death proof than HTTP silence (see captureEdge's comment, real-off #5).
         val gate = if (edgeWasHb && !lastArmByUdp) c.bootConfirmS * 1000L - silentFor.coerceAtLeast(0L) else 0L
         val delayLeft = c.delayS * 1000L - (SystemClockElapsed.get() - p).coerceAtLeast(0L)
-        if (delayLeft <= 0L && gate <= 0L) { fire(c, "掉电沿后已满 ${c.delayS}s（event）"); return }
         val r = Runnable {
             fireRunnable = null
             if (powerOffAt !== p) return@Runnable   // stale timer: edge re-captured (flap) moved the clock — a fresher one owns this
@@ -212,10 +211,28 @@ class PlugWatcher(
             // is a live-host weirdness; hand the verdict to decide()'s fallback branches (no unbounded churn).
             val overdue = now2 - powerOffAt >= (c2.delayS + 60) * 1000L
             if (!proven2 && !overdue) { armFireTimer(c2); return@Runnable }             // proof window still open — recheck later
-            val lanOk2 = hbSilenceMs().let { it in 0..14_999L } || lastArmByUdp          // LAN gate at timer time, not capture time
+            // LAN gate at timer time, not capture time. #8's strictness upgrade (drill 10:37 semantics): the
+            // handshake exemption covers only "HB died WITH/just before the SHUTDOWN" (quiet < 90 s == the host
+            // announced its death around now); an episode that was ALREADY blind when armed (host alive, Wi-Fi dead
+            // -> armed on LAN death, drills froze HB for exactly this) stays held — the user's "双哑=不发" policy.
+            // #8 drill-5 correction: the previous exemption window read "quiet < delay(90 s)" and matched nothing —
+            // in this wiring HB ALWAYS dies with the host, so quiet only ever reads >=600 s (watcher keeps listening
+            // after ErP drops VBUS; no new beats, ever). The window's true purpose is excluding a blind episode that
+            // armed LONG ago on an alive-but-WiFi-dead host, i.e. quiet measured since ARM: delay+180 s covers the
+            // whole legitimate countdown (arm→HB dies at bootClear-ish→verdict at arm+delay+) with margin.
+            val lanOk2 = hbSilenceMs().let { it in 0..14_999L } ||
+                // #8 drill-7 final semantics (HB rides USB too — adb reverse delivers over 10.31.x.x, so HB silence
+                // is NOT a Wi-Fi-blind detector; the pre-fire miio probe in writeOff is). Timer side:
+                //   - handshake arm + beats truly gone (quiet >= 15 s / never-heard) => planned death => fire;
+                //   - blind mid-countdown (beats still fresh at verdict time but Wi-Fi died en route) => the probe
+                //     would fail and retry, but the TIMER must not keep firing on its own — hand to tick/stale lanes;
+                //   - drills' frozen-HB-with-alive-agent episodes age out via the armed-window cap.
+                (lastArmByUdp && (hbSilenceMs() >= 15_000L || hbSilenceMs() < 0L) &&
+                    now2 - armedAt < (c2.delayS + 180) * 1000L)
             if (now2 - powerOffAt >= c2.delayS * 1000L && proven2 && lanOk2) fire(c2, "掉电沿后已满 ${c2.delayS}s（event）")
-            else if (!lanOk2 && !overdue) { armFireTimer(c2); return@Runnable }          // went blind mid-countdown — recheck on the LAN
-            // else: fall through silently — the tick owns this verdict from here on
+            // else: fall through silently — decide()'s lanes own this verdict from here on (hold while blind,
+            // stale backstop for no-edge anomalies; the timer's recheck loop is deliberately NOT extended past
+            // its delay+60 bound, #8's +305 s stall was that loop handing off into gates that refuse to act).
         }
         fireRunnable = r
         main.postDelayed(r, maxOf(500L, minOf(delayLeft, if (gate > 0L) gate else Long.MAX_VALUE)))
@@ -401,6 +418,8 @@ class PlugWatcher(
                 // bootClear old that still sees ZERO bytes was never revived by anything — silence==0 there is a
                 // clock artifact, not life (agentDataAt is companion-static per the T3 lesson: ==0 means no data
                 // since process start, full stop). Freshness therefore requires real stamps OR an old-enough episode.
+                // (sharedAgentClock's floor already zeroes stamps younger than 15 s — seeds/installs can't pose as
+                // revival; only an agent that has been ANSWERING for >=15 s in this process reads as alive)
                 val agentFresh = if (aNow == 0L) armedAgo >= c.bootClearS * 1000L && silentFor < c.bootClearS * 1000L
                     else silentFor < c.bootClearS * 1000L && now - aNow <= 12_000L
                 if (armedAgo >= c.bootClearS * 1000L && agentFresh) {
@@ -422,6 +441,11 @@ class PlugWatcher(
                     // phone; it then re-armed every tick — harmless but noisy, and the stale lane still fired at
                     // the exact verdict instant). This ordering is the honest fix.
                     if (powerOffAt != 0L || silentFor >= c.staleMaxS * 1000L) return
+                } else if (!lanOk && armedByHandshake && hbQuiet < 15_000L) {
+                    // #8 drill-7 tick side: handshake arm but beats are still FRESH at verdict time == the Wi-Fi
+                    // path died mid-countdown while the host keeps talking (HB rides USB); event timer bows out,
+                    // tick holds — writeOff's probe + 30 s retries carry the cut if the LAN heals.
+                    return
                 }
                 captureEdge(c, hbQuiet)   // tick-sampled edge: HB silence >=15s arms the countdown immediately
                 val edgeAgo = if (powerOffAt == 0L) -1L else now - powerOffAt

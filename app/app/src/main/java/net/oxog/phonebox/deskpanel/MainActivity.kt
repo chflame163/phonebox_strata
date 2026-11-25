@@ -273,8 +273,18 @@ class MainActivity : Activity(), SensorEventListener {
         }
     }
 
-    /** fork 2026-11-24: single clock writer — instance field for standby + companion shared fields for the plug watcher. */
+    /** fork 2026-11-24: single clock writer — instance field for standby + companion shared fields for the plug watcher.
+     *  #8 drill-11 GATE (the write-side twin of freshCfg's USB gate): stamps only while the USB data link is up ==
+     *  bytes from a LIVE server adbd/reverse target. The phone-local reverse listener (the APK's own AgentStream on
+     *  8765) answers even with the server dead — that's the self-answer loop DIAG exposed one last time (12:08 run:
+     *  agent静默 pinned 0↔15 while HB died for real, then CANCEL). ErP drops VBUS/gadget on true power-off, so the
+     *  gate closes exactly when it should; a reboot re-enumerates within seconds and stamps resume.
+     *  #8 drill-12: the gadget-state broadcast alone (configured=true) is NOT proof of a live host — hub/charger
+     *  quirks keep it sticky while the server's adbd is gone (T3 lesson), so require configured || fresh real data
+     *  (stream DATA within 12 s == bytes from an answering server). A dead-server episode fails both and stops
+     *  stamping; a live host with a flaky gadget flag still passes via stream freshness. */
     private fun stampAgentData() {
+        if (!readUsbLink() && android.os.SystemClock.elapsedRealtime() - stream.lastDataAt > AGENT_SILENCE_MS) return
         agentDataAt = SystemClock.elapsedRealtime()
         sharedAgentDataAt = agentDataAt
     }
@@ -416,7 +426,16 @@ class MainActivity : Activity(), SensorEventListener {
         registerUsbLinkReceiver()
         // Start from "the computer is there" and let the polls correct it: the first request needs a moment, while the
         // USB data link is known at once, so a phone booting into an unpowered hub still goes dark shortly after.
-        stampAgentData()
+        // #8 drill-7 poison fix: this seed used to read as instant "revival" to the plug watcher's cancel path on
+        // every fresh process (drills cancelled live episodes at tick 1 six times running). Seed it 60 s in the PAST:
+        // standby logic behaves identically (silentFor>=12 s => host-lost until first real answer), while the
+        // watcher's freshness windows (bootClear 45 s) refuse to cancel on a seed that was never an answer.
+        // #8 drill-13 THE end of the story: every seed/gate/floor variant kept losing because adb install + am start
+        // churn MainActivity constantly BY DESIGN (the watcher service pushes /api/config, whose WebView proxy path
+        // recreates the Activity) — so "seed only if empty" re-seeded now-60s on nearly every birth and fresh
+        // processes always read agent静默≈15→0. The companion static survives all of it (T3), so trust it verbatim:
+        // no seeding at all; cold boot (==0) simply reads as silence until healthTick's first real answer (~2 s).
+        agentDataAt = sharedAgentDataAt    // inherit truth; never fabricate it
         stampUsbLink(readUsbLink())
         hostAlive = true
         mainHandler.postDelayed(healthTick, HEALTH_POLL_MS)
@@ -723,8 +742,14 @@ class MainActivity : Activity(), SensorEventListener {
         // mid-countdown (T3 dry-run lesson, 11-24). SSE/proxy/probe all stamp these; instance is only for UI ops.
         @Volatile var instance: MainActivity? = null
 
-        /** shared agent-silence clock (elapsedRealtime of the last byte from the agent, either route). */
+        /** shared agent-silence clock (elapsedRealtime of the last byte from the agent, either route).
+         *  #8 drill-7: processBirthAt anchors a freshness FLOOR — companion-statics survive re-installs but their
+         *  values do not; onCreate's boot seed and any pre-stream junk must never read as "revival" to the plug
+         *  watcher (it cancelled live episodes twice red-handed in drills). The floor: stamps older than this
+         *  process's own birth are meaningless, revival requires a stamp >= 15 s post-birth (only answers provide
+         *  those; seeds land at ~0-3 s and installs can't manufacture new ones). */
         @Volatile @JvmStatic var sharedAgentDataAt = 0L
+        @Volatile @JvmStatic var processBirthAt = android.os.SystemClock.elapsedRealtime()
 
         /** shared USB-link verdict written by the Activity's healthTick/receiver and read via usbLinkUpOf. */
         @Volatile @JvmStatic var sharedUsbLinkUp = false
@@ -733,6 +758,19 @@ class MainActivity : Activity(), SensorEventListener {
         // "property whose getter returns a lambda" pattern shipped a getter that ran at call time but across
         // Activity/process churn proved fragile to reason about; PlugWatchService now binds ::sharedAgentClock /
         // ::sharedUsbClock directly, so the cancel path can never read an instance-reset fresh clock again.
+        // revival proof floor (drill-8 correction): the "<15 s old -> read 0" heuristic was wrong — stamps land
+        // ~every second, so that rule zeroed EVERY stamp forever and every episode instantly cancelled again. The
+        // real artifacts to kill are (a) stamps from a previous process instance (sharedAgentDataAt survives but its
+        // value predates this birth) and (b) onCreate's boot seed, which is fake "host alive" — MainActivity pins the
+        // seed at now-60 s so it ages out of all freshness windows within a minute instead of poisoning every fresh
+        // episode; genuine stamps are always post-birth and recent, so they pass untouched.
+        //
+        // #8 drill-9 ROOT-CAUSE FINDING (why six rebuilds changed nothing): PlugWatchService's freshCfg() writes
+        // MainActivity.sharedAgentDataAt DIRECTLY (bypassing this getter), and the phone-side adb-reverse listener
+        // answers /api/config from the APK's OWN AgentStream even while the server is dead — so a frozen-HB drill is
+        // a tautology: the "agent" that keeps stamping fresh IS the watcher's own process. Floor must be RECENT-only:
+        // stamps older than 12 s are silence (read 0 -> decide()'s stale/hold lanes), never "boot junk". Genuine
+        // reboots deliver within seconds of boot anyway (healthTick 2 s polls), so real revivals stay untouched.
         @JvmStatic fun sharedAgentClock(): Long = sharedAgentDataAt
         @JvmStatic fun sharedUsbClock(): Boolean = sharedUsbLinkUp
 
