@@ -79,7 +79,13 @@ class PlugWatchService : Service() {
             val c = java.net.URL("http://127.0.0.1:8765/api/config").openConnection() as java.net.HttpURLConnection
             c.connectTimeout = 800; c.readTimeout = 3000
             val code = c.responseCode
-            if (code < 400) {
+            // real-off #6 forensics: a dead adb-reverse forward answers with the phone's OWN local HTTP listener
+            // (the APK's AgentStream on 127.0.0.1:8765 — reverse connect succeeds against it and never times out,
+            // so this GET used to stamp "host alive" for minutes after SIGTERM while serving a STALE snapshot).
+            // A 2xx only counts as host truth when the USB data link is up (a live gadget == the host's adbd);
+            // otherwise keep the snapshot for the watcher but leave the silence clock honest.
+            val usbUpNow = MainActivity.usbLinkUpOf() || readUsbLink()
+            if (code < 400 && usbUpNow) {
                 MainActivity.sharedAgentDataAt = SystemClock.elapsedRealtime()   // answering = host alive
                 val body = (if (code < 400) c.inputStream else c.errorStream)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: ""
                 val display = JSONObject(body).optJSONObject("config")?.optJSONObject("display")

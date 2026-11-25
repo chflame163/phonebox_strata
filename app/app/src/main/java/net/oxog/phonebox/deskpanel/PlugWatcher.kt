@@ -380,7 +380,15 @@ class PlugWatcher(
                 // T3/T6 dry-run 实测：hub 断电后 configured=true 与 Charging 都能挂 40 s+)。数据重新在流即视为复活；
                 // USB link up 仅作辅助信号（真关机它必随 agent 静默而下，reboot 它是开机早期证据 — 两者都保留）。
                 val armedAgo = now - armedAt
-                if (armedAgo >= c.bootClearS * 1000L && silentFor < c.bootClearS * 1000L) {
+                // cancel gate (real-off #6 root cause): "data resumed" must mean NEW bytes, not the Wi-Fi SSE
+                // socket draining its dead-server backlog minutes after SIGTERM (lastDataAt lags real death by up
+                // to the OS read timeout; delivered callbacks trail it further). HB frames are datagram truth and
+                // cancel unconditionally; agent-data-driven cancels need the stream's own freshness signal, i.e.
+                // silence young AND still receiving within AGENT_SILENCE (12 s) of the last DATA line — a reboot
+                // that really comes back answers fresh SSE/cfg GETs within its first minute anyway (bootClearS=45).
+                val agentFresh = silentFor < c.bootClearS * 1000L &&
+                    (agentDataAt() == 0L || now - agentDataAt() <= 12_000L)   // == "bytes are actually flowing again"
+                if (armedAgo >= c.bootClearS * 1000L && agentFresh) {
                     cancel("agent 数据恢复（静默 ${silentFor / 1000}s < ${c.bootClearS}s）")
                     return
                 }

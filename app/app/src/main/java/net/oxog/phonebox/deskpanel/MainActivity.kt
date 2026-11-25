@@ -346,8 +346,12 @@ class MainActivity : Activity(), SensorEventListener {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) // standby may release it again below
         link = AgentLink(this)
         stream = AgentStream(link) { event, data ->
-            // "close" is the stream's own goodbye, not an answer from the agent; everything else is proof of life.
-            if (event != "close") stampAgentData()
+            // "close" is the stream's own goodbye, not an answer from the agent; everything else is proof of life —
+            // UNLESS it's a replayed buffer after the socket died: deliver happens at frame boundaries, which on a
+            // dead TCP can trail the last real byte by minutes (real-off #6 audit: FIRE ate edge+171s because this
+            // stamp rode delivered frames while stream.lastDataAt said the bytes stopped at T0+11.5s). Gate on the
+            // stream's own last-DATA-line clock; fresh stamps only within one AGENT_SILENCE window of true activity.
+            if (event != "close" && android.os.SystemClock.elapsedRealtime() - stream.lastDataAt <= AGENT_SILENCE_MS) stampAgentData()
             val js = "window.onAgentStream && window.onAgentStream(${JSONObject.quote(event)}, ${JSONObject.quote(data)})"
             runOnUiThread { web.evaluateJavascript(js, null) }
         }

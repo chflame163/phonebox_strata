@@ -9,6 +9,13 @@ import java.io.Closeable
  */
 class AgentStream(private val link: AgentLink, private val deliver: (event: String, data: String) -> Unit) {
 
+    /** elapsedRealtime of the last DATA line received on any stream connection — a dead TCP mid-stream yields no
+     *  exception until read() times out (Wi-Fi path ~2 min), so wall-clock freshness of this stamp is what tells a
+     *  truly-live stream from one whose bytes stopped at SIGTERM. The panel's SSE stamps agentDataAt on every
+     *  delivered event, which kept the plug watcher's confirm gate hostage through real-offs #4/#5 (+50/+291 s of
+     *  zombie refresh); MainActivity now consults THIS instead when deciding whether to stamp (see its deliver path). */
+    @Volatile var lastDataAt = 0L; private set
+
     @Volatile private var running = false
     // each start() gets a new generation; a thread from an earlier one (still connecting after a quick pause/resume)
     // sees the change and ends, so there is never more than one stream
@@ -57,7 +64,7 @@ class AgentStream(private val link: AgentLink, private val deliver: (event: Stri
                                 if (route == AgentLink.Route.WIFI && System.currentTimeMillis() - since > 60_000) break
                             }
                             line.startsWith("event:") -> event = line.substring(6).trim()
-                            line.startsWith("data:") -> data.append(line.substring(5).trimStart())
+                            line.startsWith("data:") -> { lastDataAt = android.os.SystemClock.elapsedRealtime(); data.append(line.substring(5).trimStart()) }
                         }
                     }
                 }
