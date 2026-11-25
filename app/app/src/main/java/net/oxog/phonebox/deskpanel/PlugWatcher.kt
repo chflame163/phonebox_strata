@@ -79,6 +79,14 @@ class PlugWatcher(
     @Volatile private var edgeWasHb = false       // provenance of powerOffAt: HB-silence edges keep the hostDead gate
     @Volatile private var fireRunnable: Runnable? = null   // event-driven FIRE verdict body (shared by alarm & Handler fallback)
     @Volatile private var fireAlarm: android.app.PendingIntent? = null   // monotonic exact alarm backing armFireTimer (#9)
+    private val alarmSeq = java.util.concurrent.atomic.AtomicInteger(0)  // #10c generation counter for unique PIs
+    // #10b watchdog plumbing: the receiver stamps alarmBeatAt on every delivery (proof the ROM honors us); decide()
+    // compares it against our own schedule (alarmScheduledAt) and fires honestly itself when the clock went silent
+    // past the deadline — real-off #10 proved mid-rearm alarms can vanish without a trace (no pending alarm in
+    // dumpsys, verdict gone with it). No more trusting luck.
+    @Volatile private var alarmBeatAt = 0L
+    @Volatile private var alarmScheduledAt = 0L
+    fun noteAlarmBeat() { alarmBeatAt = SystemClockElapsed.get() }
     @Volatile private var lastDiag = ""                    // decide() per-state clock dump (dedupe by content)
 
     companion object {
@@ -251,15 +259,24 @@ class PlugWatcher(
         // to stale-300s). AlarmManager ELAPSED_REALTIME_WAKEUP + setExact* is immune (fires even in doze), and we
         // still hop back to main.post so the verdict body keeps its single-threaded discipline.
         val whenMs = maxOf(500L, minOf(delayLeft, if (gate > 0L) gate else Long.MAX_VALUE))
+        // #10c root cause of the vanished re-arm: getBroadcast(rc, SAME intent action+package) produces an EQUAL
+        // PendingIntent across every armFireTimer generation — FLAG_UPDATE_CURRENT then made each new alarm REPLACE
+        // the previous one (AlarmManager semantics: same PI + set = cancel-then-set), so the verdict body's proof-
+        // window re-arm silently cancelled its own predecessor and any interleaving (episode churn, service restart)
+        // could strand ARMED with NO pending clock at all. Fix = unique requestCode per generation: every schedule
+        // is a distinct PI; old ones die with their rings (ONE_SHOT) or with cancelFireAlarm (episode end).
+        val gen = alarmSeq.incrementAndGet()
         try {
             val am = context.getSystemService(android.content.Context.ALARM_SERVICE) as android.app.AlarmManager
             val pi = android.app.PendingIntent.getBroadcast(
-                context, FIRE_ALARM_REQ_CODE,
-                android.content.Intent(FIRE_ALARM_ACTION).setPackage(context.packageName),
+                context, FIRE_ALARM_REQ_CODE + gen,   // #10c unique per generation — no more cross-alarm canceling
+                android.content.Intent(FIRE_ALARM_ACTION).setPackage(context.packageName)
+                    .putExtra("gen", gen),            // carrier to distinguish rings in logcat forensics
                 android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_UPDATE_CURRENT
                     or (if (android.os.Build.VERSION.SDK_INT >= 31) android.app.PendingIntent.FLAG_MUTABLE else 0),
             )
             fireAlarm = pi
+            alarmScheduledAt = SystemClockElapsed.get() + whenMs   // deadline bookkeeping for the tick watchdog (#10b)
             if (android.os.Build.VERSION.SDK_INT >= 31 && !am.canScheduleExactAlarms())
                 am.set(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP,
                     android.os.SystemClock.elapsedRealtime() + whenMs, pi)   // legacy inexact window; tick backstop still judges honestly
@@ -501,8 +518,31 @@ class PlugWatcher(
                 // HB-backed edges still need agent-death confirmation (a Wi-Fi flake must not cut the server's own
                 // supply); structural edges (plug-loss / USB-gadget-death) are self-proving and fire on delay alone.
                 val edgeProven = if (edgeWasHb) silentFor >= c.bootConfirmS * 1000L else true
+                // #10 THE structural bug behind every "late" verdict (#7 +311, #8 +322, #9 +191 — all landed on
+                // staleMax, none on delay): this branch was gated by the old `powerOffAt == 0L` hold AND the stale
+                // branch below by `edgeAgo < 0`, so once captureEdge set powerOffAt (every real-off sets it within
+                // ~5 s) NEITHER lane could ever fire again and only staleMax remained reachable — delay was dead
+                // code by construction. Now: proven edge + delay elapsed fires here, full stop; the LAN hold above
+                // still guards the blind-phone case BEFORE this point (return), delivery truth = writeOff probe+retries.
                 if (edgeAgo >= c.delayS * 1000L && edgeProven) {
-                    fire(c, "掉电沿后已满 ${c.delayS}s")   // tick backstop (or the event timer landing the same verdict ms earlier)
+                    // #10b watchdog, two failure signatures of the exact-alarm lane (#10 forensics: alarm rang at
+                    // edge+~90s per DIAG, verdict body re-armed a proof-window timer that then VANISHED — dumpsys
+                    // showed no pending PLUGW alarm and stale saved the day ~2 min later):
+                    //   (a) schedule deadline passed with NO receiver beat  => ROM dropped it            -> rescue now
+                    //   (b) a beat happened but the verdict body still didn't run (hop dead: startService refused
+                    //       or live==null — #9's signature, alarm delivered yet state stayed ARMED)        -> rescue now
+                    // Healthy path stays untouched: when the ring is on time, fire() runs from the alarm and this
+                    // branch never sees an overdue deadline (alarmScheduledAt is cleared inside fire()'s cancel).
+                    val deadline = alarmScheduledAt
+                    val alarmLostSilent = deadline != 0L && now > deadline + 25_000L && alarmBeatAt < deadline - 1_000L
+                    val hopDead = deadline != 0L && now > deadline + 25_000L && alarmBeatAt >= deadline - 1_000L &&
+                        state == State.ARMED && powerOffAt != 0L   // beat rang, verdict still didn't land
+                    if ((alarmLostSilent || hopDead) && state == State.ARMED && powerOffAt != 0L) {
+                        log("DIAG 闹钟异常(${if (hopDead) "响但hop未落地" else "无响"}) deadline+${(now - deadline) / 1000}s →tick 接管")
+                        fire(c, "掉电沿后已满 ${c.delayS}s（tick-rescue）")
+                    } else {
+                        fire(c, "掉电沿后已满 ${c.delayS}s（tick）")   // normal tick backstop (alarm usually wins ms earlier)
+                    }
                 } else if (powerOffAt == 0L && armedAgo >= c.delayS * 1000L && hostDead) {
                     // 握手 arm + delay 过点 + agent 确死 — ErP/hub 沿没捕获（本 wiring VBUS 假上电）时的兜底火路
                     fire(c, "握手 arm+${armedAgo / 1000}s 且 agent 确死（沿未捕获，hub/VBUS 假上电）")

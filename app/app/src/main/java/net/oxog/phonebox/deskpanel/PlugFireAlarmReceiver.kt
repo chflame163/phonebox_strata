@@ -14,7 +14,17 @@ import android.content.Intent
 class PlugFireAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context?, i: Intent?) {
         if (i?.action != PlugWatcher.FIRE_ALARM_ACTION) return
-        // FLAG_EXPLICIT_FOR_COMPONENT not needed: explicit class intent below pins the target.
+        // #10 dual insurance: this process-wide receiver runs in the SAME process as the service — direct call is
+        // the reliable path (#9's startService hop silently swallowed it: dumpsys alarm proves the alarm DELIVERED
+        // (1 wakeups, +34ms running) yet no verdict followed, so the hop was the dead end). Keep the explicit-
+        // component startService as cold backup for a watcher that isn't live (service restart across the alarm).
+        // #10b (real-off #10 forensics: DIAG showed the alarm DID ring at edge+~90s — verdict ran and re-armed the
+        // proof-window timer, which then died silently ~2 min later; dumpsys alarm shows NO pending PLUGW alarm):
+        // an exact alarm cancelled or dropped by the ROM mid-rearm must not leave the episode to stale-luck. The
+        // receiver also stamps a heartbeat so the tick's watchdog (alarmRangAt) can see "the clock is alive" and,
+        // when it ISN'T while the deadline has passed, fire honestly instead of waiting for staleMax.
+        PlugWatcher.live?.noteAlarmBeat()
         c?.startService(android.content.Intent(c, PlugWatchService::class.java).setAction(PlugWatchService.ACTION_FIRE_ALARM))
+        PlugWatcher.live?.onFireAlarm()
     }
 }
