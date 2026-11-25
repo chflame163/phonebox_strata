@@ -6,7 +6,12 @@
      v2 (2026-11-25 维护者五项改版)：① 去 "Model state" 标题；② 徽章互斥——DOM 里只留当前态一个
      （Queued 时文本带队列数 "Queued N"），不再六坑位半透明并排；③ 工作文字(label)独立一行、
      nowrap+ellipsis，绝不被右侧数值挤成两行而顶得进度条上下跳；④ 灰色数值(detail)挪到 label
-     正下方同左对齐；⑤ 进度条原样。fit() 同步简化：head=单徽章恒为单行，无数据时徽章整个移除。 -->
+     正下方同左对齐；⑤ 进度条原样。fit() 同步简化：head=单徽章恒为单行，无数据时徽章整个移除。
+     v3 (2026-11-25 维护者追加)：Queued 是**独立队列信号**、不是引擎状态机的成员（实测它几乎从不
+     lit——lit 判定 s===lit||s===state 里 queued 两路都撞不上），v2 把它卷进互斥单徽章后基本不显示。
+     现拆成右侧常驻等位指示灯：margin-left:auto 钉死右端（左侧有没有状态徽章都不动）、永不移除；
+     有队列=warn 亮起+文本 "Queued N"，队列为空=中性淡显 "Queued"。互斥区从此只管
+     idle/unloaded/reading/generating/error 五个真状态。 -->
 <style>
 :root{
   /* Strata dark-theme tokens（tokens.css [data-theme=dark] 原值；中性色改成 PhoneBox 卡上的 rgba 等效） */
@@ -35,9 +40,12 @@
 .ms__badge::before{content:"";width:.62em;height:.62em;border-radius:50%;background:currentColor;flex:none}
 .ms__badge[data-s="reading"]{background:var(--ms-info-tint);color:var(--ms-info-text);border-color:transparent}
 .ms__badge[data-s="generating"]{background:var(--ms-accent-tint);color:var(--ms-accent-text);border-color:transparent}
-.ms__badge[data-s="queued"]{background:var(--ms-warn-tint);color:var(--ms-warn-text);border-color:transparent}
 .ms__badge[data-s="error"]{background:var(--ms-danger-tint);color:var(--ms-danger-text);border-color:transparent}
 .ms__badge.on{opacity:1}
+/* v3：Queued = 右侧常驻队列灯——margin-left:auto 钉右端(与左侧徽章区解耦)、永不移除；
+   有队列 warn 亮+数字，空闲中性淡显。它不是引擎状态成员，故不吃 data-s 状态配色。 */
+.ms__qbadge{margin-left:auto;flex:none}
+.ms__qbadge.on{background:var(--ms-warn-tint);color:var(--ms-warn-text);border-color:transparent;opacity:1}
 /* v2③④：label 独立一行 nowrap+ellipsis（撑不下截断，永不换行顶跳动进度条）；detail 下一行左对齐 */
 .ms__stack{display:flex;flex-direction:column;gap:.15em;flex:none;min-width:0}
 .ms__label{font-size:1em;font-weight:500;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
@@ -58,8 +66,10 @@
 
 <div class="ms" id="ms">
   <div class="ms__head" id="ms-head">
-    <!-- v2①：无标题；v2②：徽章由 JS 动态生成，任意时刻至多一个（互斥状态） -->
+    <!-- v2①：无标题；v2②：互斥状态徽章由 JS 动态生成，任意时刻至多一个（idle/unloaded/reading/generating/error） -->
     <span class="ms__badges" id="ms-badges"></span>
+    <!-- v3：常驻队列灯——JS 只改它的 on 态与文本，元素本身永不移除；margin-left:auto 钉死右端 -->
+    <span class="ms__badge ms__qbadge" id="ms-qbadge">Queued</span>
   </div>
   <div class="ms__stack"><span class="ms__label" id="ms-label">Waiting for a request</span><span class="ms__detail" id="ms-detail">–</span></div>
   <div class="ms__prog" id="ms-prog"><div class="ms__bar" id="ms-bar" style="width:0%"></div></div>
@@ -71,6 +81,7 @@
   var root = document.getElementById("ms"),
       head = document.getElementById("ms-head"),
       badges = document.getElementById("ms-badges"),
+      qbadge = document.getElementById("ms-qbadge"),
       labelEl = document.getElementById("ms-label"),
       detailEl = document.getElementById("ms-detail"),
       progEl = document.getElementById("ms-prog"),
@@ -85,31 +96,40 @@
 
   var lastData = null;
 
-  // v2②：徽章互斥——DOM 里只渲染当前态一个。lit 判定沿用旧语义（queued>0 → Queued，
-  // 否则按 state）；Queued 徽章文本带等待队列数（"Queued 2"）。无数据(state=null)→移除徽章、头部塌陷。
+  // v2②+v3：互斥徽章只管引擎真状态——DOM 里只渲染当前态一个；Queued 已从互斥区拆出，
+  // 归右侧常驻队列灯管（见 setQueue）。无数据(state=null)→移除徽章、头部塌陷。
   var BADGE_TXT = { idle: "Idle", unloaded: "Unloaded", reading: "Reading",
-                    generating: "Generating", queued: "Queued", error: "Error" };
-  function setBadge(lit, queued) {
-    if (!lit || !BADGE_TXT[lit]) { badges.replaceChildren(); return; }
+                    generating: "Generating", error: "Error" };
+  function setBadge(state) {
+    if (!state || !BADGE_TXT[state]) { badges.replaceChildren(); return; }
     var b = document.createElement("span");
     b.className = "ms__badge on";                 // 只有一个，恒亮（.on 规则保留以兼容样式）
-    b.setAttribute("data-s", lit);
-    b.textContent = (lit === "queued" && queued > 0 ? "Queued " + queued : BADGE_TXT[lit]);
+    b.setAttribute("data-s", state);
+    b.textContent = BADGE_TXT[state];
     badges.replaceChildren(b);
+  }
+
+  // v3：右侧常驻队列灯——元素永不移除、位置被 margin-left:auto 钉死；有队列 warn 亮+"Queued N"，
+  // 队列为空（或无数据）中性淡显 "Queued"。
+  function setQueue(qn) {
+    var on = qn > 0;
+    qbadge.classList.toggle("on", on);
+    qbadge.textContent = on ? "Queued " + qn : "Queued";
   }
 
   function render(item) {
     var d = item && typeof item === "object" && "data" in item ? item.data : item;
     if (d && typeof d === "object") lastData = d;
-    if (!d || typeof d !== "object") {          // 没有数据（ttl 过期 / 引擎没起）：无徽章、label 回等待态
+    if (!d || typeof d !== "object") {          // 没有数据（ttl 过期 / 引擎没起）：无徽章、队列灯熄灭、label 回等待态
       setBadge(null);
+      setQueue(0);
       paint(null, null, "", 0, null);
       return;
     }
     var state = d.state || d.raw_state || null;
     var qn = +d.queued > 0 ? Math.round(+d.queued) : 0;
-    var lit = qn > 0 ? "queued" : state;          // app.js: on = queued>0 ? "queued" : live.state
-    setBadge(lit, qn);
+    setBadge(state);                            // v3：互斥徽章=真状态，不再被 queued 劫持
+    setQueue(qn);
 
     var label = "Waiting for a request", detail = "", pct = 0, tone = null, indet = false;
     if (state === "reading") {
@@ -147,7 +167,7 @@
   }
 
   // v2：徽章只剩一个、label/detail 各自 nowrap，六徽章时代那套“找一行放得下的字号”的搜索已多余——
-  // 简化为从大到小找不溢出的最大字号；head 无徽章时恒 0 高，singleLine() 恒真（保留以兼容验证钩子）。
+  // 简化为从大到小找不溢出的最大字号；head 恒含常驻队列灯故恒有高度。
   var hi = 17, lo = 7, cache = "";
   function ok(f, tight) {
     root.style.fontSize = f + "px";
@@ -155,11 +175,14 @@
     return root.scrollHeight <= root.clientHeight + 1;
   }
   function singleLine() {
-    var b = badges.firstElementChild ? badges.firstElementChild.getBoundingClientRect().height : 0;
+    // v3：head 里常驻队列灯——参照高度取「首个徽章或队列灯」的较大者，恒有值不再退化为 0
+    var ref = badges.firstElementChild || qbadge;
+    var b = ref.getBoundingClientRect().height;
     return head.getBoundingClientRect().height <= b * 1.6 + 1;
   }
   function fit() {
-    var key = root.clientWidth + "x" + root.clientHeight + "|" + badges.children.length;
+    // v3：队列灯数字位数(0/1/2/3+位)会改变 head 单行所需字号，cache key 带上其文本长度
+    var key = root.clientWidth + "x" + root.clientHeight + "|" + badges.children.length + "|" + qbadge.textContent.length;
     if (key === cache && root.scrollHeight <= root.clientHeight + 1) { return; }   // 卡片/徽章数没变就不重排
     cache = key;
     var f, FS_MIN_SINGLE = 11;   // 只有单行还能保持 11px 以上才追求原图那种一行排版

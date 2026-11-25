@@ -11,7 +11,7 @@
 | `strata_tps`     | 引擎 `/metrics` `live.tok_s`（decode）                                                            | Pushed value，style=big value，**2×1**                         | level：≥60 ok / ≥20 warn / 否则 error                                 | 20 s |
 | `strata_prefill` | 同上 `prefill_tok_s_mean`，idle 回落自算                                                          | Pushed value，big，**2×1**                                     | 同上                                                                  | 20 s |
 | `strata_ctx`     | `/slots` `n_prompt_tokens/1024`（**K tokens 刻度**，unit 写的 KB 不是字节）                       | Pushed value，gauge，2×2，**max=512**                          | `CTX_WARN_KB=320` / `CTX_ERR_KB=440`（440 正对 448K 工作窗）          | 20 s |
-| `strata_state`   | 引擎 `/metrics` live 原样透传 + `out_est` 估算                                                    | `widgets/strata_model_state_html_widget.html`，Custom HTML 4×2 | v2：无标题、单徽章互斥（Queued 带队列数）、label/detail 各一行 nowrap+进度条 | 20 s |
+| `strata_state`   | 引擎 `/metrics` live 原样透传 + `out_est` 估算                                                    | `widgets/strata_model_state_html_widget.html`，Custom HTML 4×2 | v3：无标题、互斥单徽章+右侧常驻队列灯（Queued N）、label/detail 各一行 nowrap+进度条 | 20 s |
 | `gpu_power`      | agent `/api/state` 的 `pc.gpu`（顺 agent 自己的 nvidia-smi 流，零 fork；nvidia-smi 直采只做兜底） | Pushed value，gauge，2×2，max=350                              | `GW_WARN=100 / GW_ERR=300`（绝对瓦数；`sub` 带 GPU 温度）             | 20 s |
 | `vram_gb`        | 同上一次 nvidia-smi 的 `memory.used/total`                                                        | Pushed value，gauge，2×2，**max=24**                           | `VR_WARN_GB=14.0 / VR_ERR_GB=23.2`（按**已用 GB**）                   | 20 s |
 | `plug_power`     | `../plug-control/power-read/` 的 reader 经 `/tmp/pb_plug_cache.json` 接力                         | `widgets/plug_power_html_widget.html`，Custom HTML 4×2         | 阈值随 payload 下发（`PW_WARN,PW_ERR=250,400`，量程 `PLUG_FULL=700`） | 8 s  |
@@ -61,10 +61,12 @@ cp collector/pb-strata-push.{service,timer} ~/.config/systemd/user/ && systemctl
 ## 4. 控件样式备注
 
 `strata_model_state_html_widget.html` 复刻引擎自带 Monitor 卡的文案，含两处对引擎的有意升级
-（generating 分母用 `out_est` p75 估算、无可靠分母时画 32% 淡底+扫光）。**v2（2026-11-25）改版**：
-去 "Model state" 标题；六灯淡显废弃——徽章互斥、DOM 里只渲染当前态一个（Queued 带队列数
-"Queued N"，无数据整个移除）；label/detail 各自独立一行 nowrap+ellipsis（防 detail 与 label
-抢行导致进度条上下跳）。`plug_power_html_widget.html` 是 step-after 阶梯波+
+（generating 分母用 `out_est` p75 估算、无可靠分母时画 32% 淡底+扫光）。**v2+v3（2026-11-25）改版**：
+去 "Model state" 标题；六灯淡显废弃——互斥徽章只管引擎真状态（idle/unloaded/reading/generating/
+error），DOM 只渲染当前态一个；**Queued 拆成右侧常驻队列灯**（v3：它本就不是状态成员，v2 卷进
+互斥后实测几乎从不显示）——margin-left:auto 钉死右端、永不移除，有队列 warn 亮+"Queued N"、
+空闲中性淡显；label/detail 各自独立一行 nowrap+ellipsis（防 detail 与 label 抢行导致进度条
+上下跳）。`plug_power_html_widget.html` 是 step-after 阶梯波+
 今日 kWh（恒两位小数），量程自适应（下限 warn×0.8，线出界不画），9 s 无新值转 dead。
 big value 的字号加大与自适应缩字在 **APK 资产**里（`../app/README.md` 的 style.css/basic.js）。
 
