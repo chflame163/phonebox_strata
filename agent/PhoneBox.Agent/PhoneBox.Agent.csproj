@@ -51,9 +51,11 @@
     <EmbeddedResource Include="settings.html" LogicalName="settings.html" />
     <EmbeddedResource Include="widgets.json" LogicalName="widgets.json" />
     <EmbeddedResource Include="templates.json" LogicalName="templates.json" />
-    <!-- the phone's panel, served at /panel/ for the live preview in the layout editor -->
-    <EmbeddedResource Include="..\..\android\app\src\main\assets\www\*.*" LogicalName="www/%(Filename)%(Extension)" />
-    <EmbeddedResource Include="..\..\android\app\src\main\assets\www\widgets\*.*" LogicalName="www/widgets/%(Filename)%(Extension)" />
+    <!-- the phone's panel, served at /panel/ for the live preview in the layout editor.
+         This fork keeps the Android app at app/app/… (upstream had android/app/…): a glob that matches
+         nothing is skipped silently, which used to strip every www/ resource and black out the editor. -->
+    <EmbeddedResource Include="..\..\app\app\src\main\assets\www\*.*" LogicalName="www/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\app\app\src\main\assets\www\widgets\*.*" LogicalName="www/widgets/%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
