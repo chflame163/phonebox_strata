@@ -2,7 +2,7 @@
 
 本项目是基于 [ersinkoc/phonebox](https://github.com/ersinkoc/phonebox) 的修改版，使用旧手机监控 Linux 服务器上的 Strata 活动。
 
-![面板机 home 页实拍照（2026-11-25，Model state v3：无标题、互斥单徽章+右侧常驻 Queued 队列灯）](images/cover.jpg)
+![面板机 home 页实拍照（2026-11-25，Model state v3 工作中定格：Generating 徽章居左、Queued 1 钉右点亮、工作文字截断省略）](images/cover.jpg)
 
 > 三个子系统：    
 > **PhoneBox 面板**（Strata 推理服务器的 .NET agent + 一加 3T 面板 App）    
