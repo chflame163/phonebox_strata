@@ -2,7 +2,11 @@
      1:1 移植自 Strata serve/web：index.html 的 .state-card + components.css 的 .st-badge/.st-progress
      + app.css 的 .badges opacity 规则 + app.js renderMonitor() 的 label/detail/pct 逻辑。
      卡片外框（背景/边框/圆角）由 PhoneBox 的 .w-html.card 提供，这里只画内容。
-     数据：push key `strata_state`，payload 见 pb_strata_push.py 注释。 -->
+     数据：push key `strata_state`，payload 见 pb_strata_push.py 注释。
+     v2 (2026-11-25 维护者五项改版)：① 去 "Model state" 标题；② 徽章互斥——DOM 里只留当前态一个
+     （Queued 时文本带队列数 "Queued N"），不再六坑位半透明并排；③ 工作文字(label)独立一行、
+     nowrap+ellipsis，绝不被右侧数值挤成两行而顶得进度条上下跳；④ 灰色数值(detail)挪到 label
+     正下方同左对齐；⑤ 进度条原样。fit() 同步简化：head=单徽章恒为单行，无数据时徽章整个移除。 -->
 <style>
 :root{
   /* Strata dark-theme tokens（tokens.css [data-theme=dark] 原值；中性色改成 PhoneBox 卡上的 rgba 等效） */
@@ -23,7 +27,7 @@
 .ms>*,.ms{min-width:0}
 .ms__head{display:flex;align-items:center;gap:.75em;flex-wrap:wrap;flex:none}
 .ms__title{font-weight:700;font-size:1.2em;line-height:1.15;letter-spacing:.005em;color:var(--ms-ink);white-space:nowrap}
-.ms__badges{display:flex;gap:.5em;flex-wrap:wrap;min-width:0}
+.ms__badges{display:flex;gap:.5em;flex-wrap:wrap;min-width:0}   /* v2：只剩当前态一个徽章，恒单行 */
 .ms__badge{display:inline-flex;align-items:center;gap:.5em;height:2em;padding:0 .83em;flex:none;
   border-radius:9999px;font-size:.95em;font-weight:700;line-height:1;white-space:nowrap;
   background:var(--ms-surface-2);color:var(--ms-ink-muted);border:1px solid var(--ms-line);
@@ -34,8 +38,10 @@
 .ms__badge[data-s="queued"]{background:var(--ms-warn-tint);color:var(--ms-warn-text);border-color:transparent}
 .ms__badge[data-s="error"]{background:var(--ms-danger-tint);color:var(--ms-danger-text);border-color:transparent}
 .ms__badge.on{opacity:1}
-.ms__row{display:flex;justify-content:space-between;align-items:baseline;gap:1em;font-size:1em;font-weight:500;line-height:1.25;flex:none;min-width:0}
-.ms__row .muted{color:var(--ms-ink-muted);font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* v2③④：label 独立一行 nowrap+ellipsis（撑不下截断，永不换行顶跳动进度条）；detail 下一行左对齐 */
+.ms__stack{display:flex;flex-direction:column;gap:.15em;flex:none;min-width:0}
+.ms__label{font-size:1em;font-weight:500;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.ms__detail{color:var(--ms-ink-muted);font-weight:400;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .ms__prog{position:relative;height:.62em;border-radius:9999px;background:var(--ms-surface-2);border:1px solid var(--ms-line-soft);overflow:hidden;flex:none}
 .ms__bar{height:100%;border-radius:inherit;background:var(--ms-accent);transition:width 160ms var(--ms-ease)}
 .ms__prog[data-tone="info"] .ms__bar{background:var(--ms-info)}
@@ -52,17 +58,10 @@
 
 <div class="ms" id="ms">
   <div class="ms__head" id="ms-head">
-    <span class="ms__title">Model state</span>
-    <span class="ms__badges" id="ms-badges">
-      <span class="ms__badge" data-s="idle">Idle</span>
-      <span class="ms__badge" data-s="unloaded">Unloaded</span>
-      <span class="ms__badge" data-s="reading">Reading</span>
-      <span class="ms__badge" data-s="generating">Generating</span>
-      <span class="ms__badge" data-s="queued">Queued</span>
-      <span class="ms__badge" data-s="error">Error</span>
-    </span>
+    <!-- v2①：无标题；v2②：徽章由 JS 动态生成，任意时刻至多一个（互斥状态） -->
+    <span class="ms__badges" id="ms-badges"></span>
   </div>
-  <div class="ms__row"><span id="ms-label">Waiting for a request</span><span class="muted" id="ms-detail">–</span></div>
+  <div class="ms__stack"><span class="ms__label" id="ms-label">Waiting for a request</span><span class="ms__detail" id="ms-detail">–</span></div>
   <div class="ms__prog" id="ms-prog"><div class="ms__bar" id="ms-bar" style="width:0%"></div></div>
 </div>
 
@@ -86,20 +85,31 @@
 
   var lastData = null;
 
+  // v2②：徽章互斥——DOM 里只渲染当前态一个。lit 判定沿用旧语义（queued>0 → Queued，
+  // 否则按 state）；Queued 徽章文本带等待队列数（"Queued 2"）。无数据(state=null)→移除徽章、头部塌陷。
+  var BADGE_TXT = { idle: "Idle", unloaded: "Unloaded", reading: "Reading",
+                    generating: "Generating", queued: "Queued", error: "Error" };
+  function setBadge(lit, queued) {
+    if (!lit || !BADGE_TXT[lit]) { badges.replaceChildren(); return; }
+    var b = document.createElement("span");
+    b.className = "ms__badge on";                 // 只有一个，恒亮（.on 规则保留以兼容样式）
+    b.setAttribute("data-s", lit);
+    b.textContent = (lit === "queued" && queued > 0 ? "Queued " + queued : BADGE_TXT[lit]);
+    badges.replaceChildren(b);
+  }
+
   function render(item) {
     var d = item && typeof item === "object" && "data" in item ? item.data : item;
     if (d && typeof d === "object") lastData = d;
-    if (!d || typeof d !== "object") {          // 没有数据（ttl 过期 / 引擎没起）：全淡、Idle 不亮
+    if (!d || typeof d !== "object") {          // 没有数据（ttl 过期 / 引擎没起）：无徽章、label 回等待态
+      setBadge(null);
       paint(null, null, "", 0, null);
       return;
     }
     var state = d.state || d.raw_state || null;
-    var lit = +d.queued > 0 ? "queued" : state;      // app.js: on = queued>0 ? "queued" : live.state
-    // app.js: lit = (b.dataset.s === on || b.dataset.s === live.state)
-    Array.prototype.forEach.call(badges.children, function (b) {
-      var s = b.getAttribute("data-s");
-      b.classList.toggle("on", s === lit || s === state);
-    });
+    var qn = +d.queued > 0 ? Math.round(+d.queued) : 0;
+    var lit = qn > 0 ? "queued" : state;          // app.js: on = queued>0 ? "queued" : live.state
+    setBadge(lit, qn);
 
     var label = "Waiting for a request", detail = "", pct = 0, tone = null, indet = false;
     if (state === "reading") {
@@ -136,8 +146,8 @@
     fit();
   }
 
-  // 6x2 的卡很小，字号自适应：先从大到小找能一行放下 6 个徽章的字号；放不下就退而求其次，
-  // 用“换行但不溢出”的最大字号（可读性优先）；还不够就压间距再来一遍。
+  // v2：徽章只剩一个、label/detail 各自 nowrap，六徽章时代那套“找一行放得下的字号”的搜索已多余——
+  // 简化为从大到小找不溢出的最大字号；head 无徽章时恒 0 高，singleLine() 恒真（保留以兼容验证钩子）。
   var hi = 17, lo = 7, cache = "";
   function ok(f, tight) {
     root.style.fontSize = f + "px";
@@ -149,8 +159,8 @@
     return head.getBoundingClientRect().height <= b * 1.6 + 1;
   }
   function fit() {
-    var key = root.clientWidth + "x" + root.clientHeight;
-    if (key === cache && root.scrollHeight <= root.clientHeight + 1) { return; }   // 卡片尺寸没变就不重排
+    var key = root.clientWidth + "x" + root.clientHeight + "|" + badges.children.length;
+    if (key === cache && root.scrollHeight <= root.clientHeight + 1) { return; }   // 卡片/徽章数没变就不重排
     cache = key;
     var f, FS_MIN_SINGLE = 11;   // 只有单行还能保持 11px 以上才追求原图那种一行排版
     for (f = hi; f >= Math.max(lo, FS_MIN_SINGLE); f -= 0.5) { if (ok(f, false) && singleLine()) { root.dataset.fs = f; return; } }
